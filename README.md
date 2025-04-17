@@ -18,7 +18,7 @@ Scientific Reports.
 -   [Citation](#citation)
 -   [Contact](#contact)
 
-## Overview {#overview}
+## Overview
 
 This project investigates how social norms influence people's risk
 preferences in both moral and monetary domains. Using an adapted version
@@ -43,7 +43,7 @@ loss frames, but both norm types are equally effective in gain frames
 The analysis uses mixed-effects logistic regression models to capture
 these effects while accounting for individual differences.
 
-## Structure {#structure}
+## Structure
 
 ```         
 moral-gambles-conformity/
@@ -73,7 +73,7 @@ moral-gambles-conformity/
 └── README.md
 ```
 
-## Requirements {#requirements}
+## Requirements
 
 The scripts require R and the following packages installed:
 
@@ -89,7 +89,7 @@ install.packages(c(
   ))
 ```
 
-## Usage {#usage}
+## Usage
 
 1.  Clone this repository:
 
@@ -119,7 +119,7 @@ install.packages(c(
 The scripts will generate processed data files and output files
 including fitted models and figures in the respective directories.
 
-## Data Description {#data-description}
+## Data Description
 
 The study used a three-phase experimental design:
 
@@ -147,7 +147,7 @@ Raw data files include:
 These files contain trial-level choice data, participant demographics,
 and experimental condition information.
 
-## Analysis {#analysis}
+## Analysis
 
 The analysis follows these steps:
 
@@ -171,7 +171,7 @@ The analysis follows these steps:
     -   Compares day 3 responses to baseline and day 0
     -   Generates figures for day 3 results
 
-## Figures {#figures}
+## Figures
 
 The analysis produces the following figures:
 
@@ -181,7 +181,7 @@ The analysis produces the following figures:
 -   **Figure 5**: Persistence of conformity in the monetary domain (Experiment 2) on day 3
 -   **Figure 6**: Comparisons between moral and monetary domains
 
-## Citation {#citation}
+## Citation
 
 If you use this code or data in your research, please cite our paper:
 
@@ -190,6 +190,6 @@ If you use this code or data in your research, please cite our paper:
 > Scientific Reports, 13, 853.
 > <https://doi.org/10.1038/s41598-023-27462-1>
 
-## Contact {#contact}
+## Contact
 
 For any questions or feedback, please contact the author directly.
