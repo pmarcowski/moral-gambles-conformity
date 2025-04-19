@@ -1,4 +1,4 @@
-# Analysis of Persistent Social Conformity on Risk Preferences in Moral and Economic Choices
+# Analysis of persistent social conformity on risk preferences in moral and economic choices
 
 This repository contains the data processing and analysis scripts for
 the peer-reviewed paper ["People conform to social norms when gambling
