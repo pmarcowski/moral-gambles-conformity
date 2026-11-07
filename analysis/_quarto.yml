@@ -17,8 +17,10 @@ website:
     right:
       - text: Paper
         href: https://doi.org/10.1038/s41598-023-27462-1
+        target: _blank
       - icon: github
         href: https://github.com/pmarcowski/moral-gambles-conformity
+        target: _blank
   search: true
 
 knitr:
@@ -36,3 +38,4 @@ format:
     code-fold: true
     code-tools: true
     df-print: kable
+    link-external-newwindow: true

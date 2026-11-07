@@ -1,6 +1,6 @@
 # Social conformity in moral and monetary gambles
 
-This repository contains the data preparation code, prepared datasets, and Quarto analysis notebooks for the paper ["People conform to social norms when gambling with lives or money"](https://doi.org/10.1038/s41598-023-27462-1) by Jiang, Marcowski, Ryazanov, and Winkielman (2023), published in *Scientific Reports*.
+This repository contains the prepared datasets and Quarto analysis notebooks for the paper ["People conform to social norms when gambling with lives or money"](https://doi.org/10.1038/s41598-023-27462-1) by Jiang, Marcowski, Ryazanov, and Winkielman (2023), published in *Scientific Reports*.
 
 Across two longitudinal experiments (*N* = 291 participants: *N* = 138 in Experiment 1, moral decisions about animal lives; *N* = 153 in Experiment 2, monetary decisions), we adapted the Asian Disease Paradigm to examine how observing risk-averse or risk-seeking group norms shapes personal risk preferences under gain and loss frames. Participants completed a baseline gamble-acceptance phase (`Baseline`), observed and predicted group choices with feedback (`Learning`), and reassessed their own choices immediately (`OwnD0`) and after a three-day delay (`OwnD3`, alongside predictions of another group's choices, `Others`). Mixed-effects logistic regression models (`glmmTMB`) show that participants shift their risk preferences toward observed social norms in both moral and monetary domains, that these conformity effects persist three days later, and that the relative strength of risk-averse versus risk-seeking norms depends on the interaction of framing (`Gains` vs. `Losses`) and domain (`Lives` vs. `Money`).
 
@@ -13,8 +13,8 @@ Across two longitudinal experiments (*N* = 291 participants: *N* = 138 in Experi
 | `analysis/day3.qmd` | Day 3 follow-up notebook: three-day persistence of conformity and four-phase comparisons. |
 | `analysis/_quarto.yml` | Quarto website configuration; renders to `analysis/_site/`. |
 | `analysis/mgc.scss` | Website typography and table styling. |
-| `R/prepare_data.R` | Cleans the raw trial-level exports (`data/raw/experiment{1,2}_day{0,3}.csv`), applies the exclusion cascade, and writes `data/experiment{1,2}.Rds`. |
-| `data/` | Prepared trial-level datasets (`experiment1.Rds` and `experiment2.Rds`); raw CSV exports in `data/raw/` are excluded from distribution. |
+| `data/` | Prepared trial-level datasets (`experiment1.Rds` and `experiment2.Rds`). |
+| `R/prepare_data.R` | Data preparation script documenting the exclusion criteria and variable construction for `data/experiment{1,2}.Rds`. |
 | `output/` | Cached `glmmTMB` model fits (`models_day0.Rds`, `models_day3.Rds`), exported figures (`fig2.pdf`–`fig6.pdf`), and summary tables (`key_results_day0.csv`, `key_results_day3.csv`) generated when rendering `analysis/`. |
 
 ## Reproduce
@@ -29,17 +29,11 @@ install.packages(c(
 ))
 ```
 
-1. Rebuild the prepared `.Rds` datasets from the raw CSV exports (requires `data/raw/experiment{1,2}_day{0,3}.csv`; the prepared `data/experiment1.Rds` and `data/experiment2.Rds` files are already included in the repository):
+Render the Quarto analysis notebooks and overview website from the prepared datasets in `data/` to `analysis/_site/` (also fits and caches `output/models_day0.Rds` and `output/models_day3.Rds` and exports `output/fig2.pdf`–`output/fig6.pdf`):
 
-   ```bash
-   Rscript R/prepare_data.R
-   ```
-
-2. Render the Quarto analysis notebooks and overview website to `analysis/_site/` (also fits and caches `output/models_day0.Rds` and `output/models_day3.Rds` and exports `output/fig2.pdf`–`output/fig6.pdf`):
-
-   ```bash
-   quarto render analysis
-   ```
+```bash
+quarto render analysis
+```
 
 ## Citation
 

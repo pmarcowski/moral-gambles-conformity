@@ -41,19 +41,19 @@ results <- bind_rows(
 
 plot_overview_panel <- function(df, panel_title, y_lab) {
   pairs_df <- df %>%
-    distinct(domain, pair_p_lab, pair_y) %>%
-    mutate(x = 1, xend = 2)
+    distinct(domain, pair_p_lab) %>%
+    mutate(x = 1, xend = 2, pair_y = 0.45)
 
   ggplot(df, aes(x = condition, y = estimate, fill = condition)) +
-    geom_hline(yintercept = 0, linetype = "dashed") +
-    geom_col(width = 0.35, position = position_dodge(width = 0.35), color = "black", alpha = 0.8) +
+    geom_hline(yintercept = 0, linetype = "dashed", color = "grey30") +
+    geom_col(width = 0.28, position = position_dodge(width = 0.28), color = "black") +
     geom_errorbar(
       aes(ymin = asymp.LCL, ymax = asymp.UCL),
-      width = 0.1, position = position_dodge(width = 0.35)
+      width = 0.07, position = position_dodge(width = 0.28)
     ) +
     geom_text(
-      aes(label = p_lab, y = ifelse(estimate > 0, (asymp.UCL + 0.05), (asymp.LCL - 0.08))),
-      position = position_dodge(width = 0.35)
+      aes(label = p_lab, y = ifelse(estimate > 0, (asymp.UCL + 0.055), (asymp.LCL - 0.075))),
+      position = position_dodge(width = 0.28), size = 3.8
     ) +
     ggsignif::geom_signif(
       stat = "identity", data = pairs_df,
@@ -61,8 +61,9 @@ plot_overview_panel <- function(df, panel_title, y_lab) {
       comparisons = list("Risk Averse", "Risk Seeking"),
       inherit.aes = FALSE
     ) +
-    scale_fill_grey() +
-    coord_cartesian(ylim = c(-0.5, 0.5)) +
+    scale_fill_manual(values = c("Risk Averse" = "#5C5C5C", "Risk Seeking" = "#D6D6D6")) +
+    scale_y_continuous(breaks = seq(-0.5, 0.5, 0.25)) +
+    coord_cartesian(ylim = c(-0.52, 0.55)) +
     cowplot::theme_cowplot() +
     facet_wrap(~domain) +
     labs(
@@ -72,25 +73,12 @@ plot_overview_panel <- function(df, panel_title, y_lab) {
     ) +
     theme(
       legend.position = "none",
-      plot.title = element_text(hjust = 0.5),
-      panel.spacing = unit(1, "lines"),
-      strip.background = element_rect(fill = "transparent")
+      plot.title = element_text(hjust = 0.5, size = 13),
+      panel.spacing = unit(1.2, "lines"),
+      strip.background = element_rect(fill = "transparent"),
+      strip.text = element_text(size = 11.5, margin = margin(b = 6, t = 4))
     )
 }
-
-sections <- tribble(
-  ~Section, ~Scope,
-  "[Experiment 1: Moral Domain — Day 0](day0.html#experiment-1-moral-domain-lives)",
-  "Baseline risk preferences, immediate conformity, and norm asymmetry in moral choices",
-  "[Experiment 2: Monetary Domain — Day 0](day0.html#experiment-2-monetary-domain-money)",
-  "Baseline risk preferences, immediate conformity, and norm asymmetry in monetary choices",
-  "[Combined Analysis: Moral vs. Monetary](day0.html#combined-analysis-moral-vs.-monetary-domains)",
-  "Cross-domain comparison of gamble acceptance and relative social norm influence",
-  "[Experiment 1: Moral Domain — Day 3](day3.html#experiment-1-moral-domain-lives)",
-  "Three-day persistence of conformity and four-phase comparison in moral choices",
-  "[Experiment 2: Monetary Domain — Day 3](day3.html#experiment-2-monetary-domain-money)",
-  "Three-day persistence of conformity and four-phase comparison in monetary choices"
-)
 ```
 
 Moral decisions are often assumed to follow an internal compass that resists social pressure, yet people routinely look to others when outcomes are uncertain. Across two longitudinal experiments (*N* = `r n_total` participants: *N* = `r n_e1` in Experiment 1, moral decisions involving animal lives; *N* = `r n_e2` in Experiment 2, monetary decisions), we adapted the Asian Disease Paradigm to test how observing risk-averse or risk-seeking group norms shapes personal risk preferences across gain and loss frames immediately after learning and after a three-day delay. The [Immediate Conformity](day0.qmd) and [Persistence](day3.qmd) notebooks report the full analyses and figures, accompanying Jiang, Marcowski, Ryazanov, & Winkielman (2023, *Scientific Reports*, [doi:10.1038/s41598-023-27462-1](https://doi.org/10.1038/s41598-023-27462-1)), with code and data in the [GitHub repository](https://github.com/pmarcowski/moral-gambles-conformity).
@@ -137,7 +125,11 @@ p_e2_d3 <- plot_overview_panel(
 ## Analysis Notebooks
 
 ::: {.studies}
-```{r notebooks-table}
-knitr::kable(sections, align = "ll")
-```
+| Section | Scope |
+|---|---|
+| [Experiment 1: Moral Domain (Day 0)](day0.qmd#experiment-1-moral-domain-lives) | Baseline risk preferences, immediate conformity, and norm asymmetry in moral choices |
+| [Experiment 2: Monetary Domain (Day 0)](day0.qmd#experiment-2-monetary-domain-money) | Baseline risk preferences, immediate conformity, and norm asymmetry in monetary choices |
+| [Combined Analysis: Moral vs. Monetary](day0.qmd#combined-analysis-moral-vs.-monetary-domains) | Cross-domain comparison of gamble acceptance and relative social norm influence |
+| [Experiment 1: Moral Domain (Day 3)](day3.qmd#experiment-1-moral-domain-lives) | Three-day persistence of conformity and four-phase comparison in moral choices |
+| [Experiment 2: Monetary Domain (Day 3)](day3.qmd#experiment-2-monetary-domain-money) | Three-day persistence of conformity and four-phase comparison in monetary choices |
 :::

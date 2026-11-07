@@ -6,13 +6,6 @@ author: "Przemek Marcowski"
 
 This notebook analyzes baseline risk preferences and immediate conformity to social norms across Experiment 1 (moral domain: animal lives) and Experiment 2 (monetary domain: dollars), as well as the pooled cross-domain comparison. On each trial, participants chose between a sure outcome (saving or losing 10 lives or dollars for sure) and a 50/50 gamble of varying expected value under gain or loss framing, before and after learning a risk-averse or risk-seeking group norm.
 
-| Section | Focus |
-|---|---|
-| Sample & Model Fitting | Sample composition and mixed-effects logistic regression models for Experiment 1, Experiment 2, and pooled data |
-| Experiment 1: Moral Domain (Lives) | Baseline risk preferences, immediate conformity, and norm asymmetry in moral choices |
-| Experiment 2: Monetary Domain (Money) | Baseline risk preferences, immediate conformity, and norm asymmetry in monetary choices |
-| Combined Analysis: Moral vs. Monetary Domains | Cross-domain comparison of gamble acceptance and relative norm influence |
-
 ```{r setup}
 library(tidyverse)
 library(glmmTMB)
@@ -32,6 +25,11 @@ CONDITION_LEVELS <- c("Risk Averse", "Risk Seeking")
 DOMAIN_LEVELS <- c("Gains", "Losses")
 FRAME_LEVELS <- c("Lives", "Money")
 
+fmt_num <- function(x, digits = 2) {
+  x <- ifelse(abs(x) < 0.5 * 10^(-digits), 0, x)
+  sprintf(paste0("%.", digits, "f"), x)
+}
+
 fmt_p <- function(p) {
   ifelse(p < 0.001, "< .001", sub("^0", "", sprintf("%.3f", p)))
 }
@@ -49,7 +47,7 @@ fmt_conformity_table <- function(phase_df, pair_df, phase_label = "OwnD0") {
       transmute(
         domain = factor(domain, levels = DOMAIN_LEVELS),
         ord = 3L,
-        Contrast = "Norm asymmetry (|\u0394 Risk Averse| \u2212 |\u0394 Risk Seeking|)",
+        Contrast = "Norm asymmetry (Risk Averse \u2212 Risk Seeking)",
         estimate, asymp.LCL, asymp.UCL, z.ratio, p.value
       )
   ) %>%
@@ -57,8 +55,8 @@ fmt_conformity_table <- function(phase_df, pair_df, phase_label = "OwnD0") {
     transmute(
       Domain = as.character(domain),
       Contrast = Contrast,
-      `ΔP [95% CI]` = sprintf("%.2f [%.2f, %.2f]", estimate, asymp.LCL, asymp.UCL),
-      z = sprintf("%.2f", z.ratio),
+      `ΔP [95% CI]` = sprintf("%s [%s, %s]", fmt_num(estimate), fmt_num(asymp.LCL), fmt_num(asymp.UCL)),
+      z = fmt_num(z.ratio),
       p = fmt_p(p.value)
     ) %>%
     knitr::kable(align = "llrrr")
@@ -232,7 +230,7 @@ e1_contrast_pairs$p_lab <- with(
 )
 e1_contrast_pairs$x <- 1
 e1_contrast_pairs$xend <- 2
-e1_contrast_pairs$y <- 0.4
+e1_contrast_pairs$y <- 0.45
 
 fmt_conformity_table(e1_contrasts_subset, e1_contrast_pairs, "OwnD0")
 ```
@@ -248,15 +246,14 @@ Before norm exposure, baseline gamble acceptance did not differ between the Risk
 e1_prob_data <- e1_predicted_probs
 
 e1_prob_plot <- ggplot(e1_prob_data, aes(x = ev, y = Probability, color = condition, fill = condition)) +
-  geom_hline(yintercept = 0.5, linetype = "dashed") +
-  geom_vline(xintercept = 10, linetype = "dashed") +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey30") +
+  geom_vline(xintercept = 10, linetype = "dashed", color = "grey30") +
+  geom_ribbon(aes(ymin = CI_low, ymax = CI_high), alpha = 0.45, color = NA) +
   geom_line(linewidth = 1, linetype = "solid") +
-  geom_ribbon(aes(ymin = CI_low, ymax = CI_high), alpha = 0.6, color = NA) +
-  scale_color_grey() +
-  scale_fill_grey() +
+  scale_color_manual(values = c("Risk Averse" = "#262626", "Risk Seeking" = "#8C8C8C")) +
+  scale_fill_manual(values = c("Risk Averse" = "#5C5C5C", "Risk Seeking" = "#CCCCCC")) +
   coord_cartesian(ylim = c(0, 1)) +
   cowplot::theme_cowplot() +
-  theme(legend.position = "bottom") +
   labs(
     title = "Gamble Acceptance by Expected Value",
     x = "Gamble Expected Value (Lives)",
@@ -269,7 +266,7 @@ e1_prob_plot <- ggplot(e1_prob_data, aes(x = ev, y = Probability, color = condit
   theme(
     legend.position = "bottom",
     legend.justification = c(0.5, 0.5),
-    panel.spacing = unit(2, "lines"),
+    panel.spacing = unit(1.2, "lines"),
     plot.title = element_text(hjust = 0.5),
     panel.border = element_rect(color = "black"),
     strip.background = element_rect(fill = "transparent")
@@ -286,15 +283,14 @@ e1_diffs$conf.high <- e1_own0_data$CI_high - e1_baseline_data$CI_high
 e1_diffs$contrast <- "OwnD0 - Baseline"
 
 e1_prob_diffs_plot <- ggplot(e1_diffs, aes(x = ev, y = predicted, color = condition, fill = condition)) +
-  geom_hline(yintercept = 0, linetype = "dashed") +
-  geom_vline(xintercept = 10, linetype = "dashed") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey30") +
+  geom_vline(xintercept = 10, linetype = "dashed", color = "grey30") +
   geom_line(aes(linetype = condition), linewidth = 1, color = "black") +
   scale_linetype_manual(values = c("solid", "dotted")) +
   scale_color_grey() +
   scale_fill_grey() +
   coord_cartesian(ylim = c(-0.5, 0.5)) +
   cowplot::theme_cowplot() +
-  theme(legend.position = "bottom") +
   labs(
     title = "Influence by Expected Value",
     x = "Gamble Expected Value (Lives)",
@@ -307,7 +303,8 @@ e1_prob_diffs_plot <- ggplot(e1_diffs, aes(x = ev, y = predicted, color = condit
   theme(
     legend.position = "bottom",
     legend.justification = c(0.5, 0.5),
-    panel.spacing = unit(2, "lines"),
+    legend.key.width = unit(2, "lines"),
+    panel.spacing = unit(1.2, "lines"),
     plot.title = element_text(hjust = 0.5),
     panel.border = element_rect(color = "black"),
     strip.background = element_rect(fill = "transparent")
@@ -315,16 +312,16 @@ e1_prob_diffs_plot <- ggplot(e1_diffs, aes(x = ev, y = predicted, color = condit
 
 # Group probability plot
 e1_group_plot <- ggplot(e1_emmeans_df, aes(x = phase, y = prob, fill = condition)) +
-  geom_hline(yintercept = 0.5, linetype = "dashed") +
-  geom_col(width = 0.75, position = position_dodge(width = 0.75), color = "black", alpha = 0.8) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey30") +
+  geom_col(width = 0.5, position = position_dodge(width = 0.5), color = "black") +
   geom_errorbar(
     aes(ymin = asymp.LCL, ymax = asymp.UCL),
-    width = 0.1, position = position_dodge(width = 0.75)
+    width = 0.08, position = position_dodge(width = 0.5)
   ) +
-  scale_fill_grey() +
+  scale_fill_manual(values = c("Risk Averse" = "#5C5C5C", "Risk Seeking" = "#D6D6D6")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.25), expand = expansion(mult = c(0, 0.05))) +
   coord_cartesian(ylim = c(0, 1)) +
   cowplot::theme_cowplot() +
-  theme(legend.position = "bottom") +
   labs(
     title = "Gamble Acceptance by Phase",
     x = "Phase",
@@ -335,25 +332,27 @@ e1_group_plot <- ggplot(e1_emmeans_df, aes(x = phase, y = prob, fill = condition
   theme(
     legend.position = "bottom",
     legend.justification = c(0.5, 0.5),
-    panel.spacing = unit(1, "lines"),
+    panel.spacing = unit(1.2, "lines"),
     plot.title = element_text(hjust = 0.5),
-    strip.background = element_rect(fill = "transparent")
+    strip.background = element_rect(fill = "transparent"),
+    strip.text = element_text(size = 11.5, margin = margin(b = 6, t = 4))
   )
 
 # Group difference plot
 e1_group_diffs_plot <- ggplot(e1_contrasts_subset, aes(x = condition, y = estimate, fill = condition)) +
-  geom_hline(yintercept = 0, linetype = "dashed") +
-  geom_col(width = 0.35, position = position_dodge(width = 0.35), color = "black", alpha = 0.8) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey30") +
+  geom_col(width = 0.28, position = position_dodge(width = 0.28), color = "black") +
   geom_errorbar(
     aes(ymin = asymp.LCL, ymax = asymp.UCL),
-    width = 0.1, position = position_dodge(width = 0.35)
+    width = 0.07, position = position_dodge(width = 0.28)
   ) +
   geom_text(
-    aes(label = p_lab, y = ifelse(estimate > 0, (asymp.UCL + 0.05), (asymp.LCL - 0.1))),
-    position = position_dodge(width = 0.35)
+    aes(label = p_lab, y = ifelse(estimate > 0, (asymp.UCL + 0.055), (asymp.LCL - 0.075))),
+    position = position_dodge(width = 0.28), size = 3.8
   ) +
-  scale_fill_grey() +
-  coord_cartesian(ylim = c(-0.5, 0.5)) +
+  scale_fill_manual(values = c("Risk Averse" = "#5C5C5C", "Risk Seeking" = "#D6D6D6")) +
+  scale_y_continuous(breaks = seq(-0.5, 0.5, 0.25)) +
+  coord_cartesian(ylim = c(-0.52, 0.55)) +
   cowplot::theme_cowplot() +
   ggsignif::geom_signif(
     stat = "identity", data = e1_contrast_pairs,
@@ -373,9 +372,10 @@ e1_group_diffs_plot <- ggplot(e1_contrasts_subset, aes(x = condition, y = estima
     legend.position = "none",
     legend.justification = 0.5,
     plot.title = element_text(hjust = 0.5),
-    plot.subtitle = element_text(hjust = 0.5),
-    panel.spacing = unit(1, "lines"),
-    strip.background = element_rect(fill = "transparent")
+    plot.subtitle = element_text(hjust = 0.5, size = 10.5, color = "grey25", margin = margin(b = 6)),
+    panel.spacing = unit(1.2, "lines"),
+    strip.background = element_rect(fill = "transparent"),
+    strip.text = element_text(size = 11.5, margin = margin(b = 6, t = 4))
   )
 
 layout <- "
@@ -468,7 +468,7 @@ e2_contrast_pairs$p_lab <- with(
 )
 e2_contrast_pairs$x <- 1
 e2_contrast_pairs$xend <- 2
-e2_contrast_pairs$y <- 0.475
+e2_contrast_pairs$y <- 0.45
 
 # Combine contrast pairs across both experiments
 all_contrast_pairs <- rbind(e1_contrast_pairs, e2_contrast_pairs)
@@ -487,15 +487,14 @@ At baseline, gamble acceptance did not differ between conditions in either Gains
 e2_prob_data <- e2_predicted_probs
 
 e2_prob_plot <- ggplot(e2_prob_data, aes(x = ev, y = Probability, color = condition, fill = condition)) +
-  geom_hline(yintercept = 0.5, linetype = "dashed") +
-  geom_vline(xintercept = 10, linetype = "dashed") +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey30") +
+  geom_vline(xintercept = 10, linetype = "dashed", color = "grey30") +
+  geom_ribbon(aes(ymin = CI_low, ymax = CI_high), alpha = 0.45, color = NA) +
   geom_line(linewidth = 1, linetype = "solid") +
-  geom_ribbon(aes(ymin = CI_low, ymax = CI_high), alpha = 0.6, color = NA) +
-  scale_color_grey() +
-  scale_fill_grey() +
+  scale_color_manual(values = c("Risk Averse" = "#262626", "Risk Seeking" = "#8C8C8C")) +
+  scale_fill_manual(values = c("Risk Averse" = "#5C5C5C", "Risk Seeking" = "#CCCCCC")) +
   coord_cartesian(ylim = c(0, 1)) +
   cowplot::theme_cowplot() +
-  theme(legend.position = "bottom") +
   labs(
     title = "Gamble Acceptance by Expected Value",
     x = "Gamble Expected Value (Money)",
@@ -508,7 +507,7 @@ e2_prob_plot <- ggplot(e2_prob_data, aes(x = ev, y = Probability, color = condit
   theme(
     legend.position = "bottom",
     legend.justification = c(0.5, 0.5),
-    panel.spacing = unit(2, "lines"),
+    panel.spacing = unit(1.2, "lines"),
     plot.title = element_text(hjust = 0.5),
     panel.border = element_rect(color = "black"),
     strip.background = element_rect(fill = "transparent")
@@ -525,15 +524,14 @@ e2_diffs$conf.high <- e2_own0_data$CI_high - e2_baseline_data$CI_high
 e2_diffs$contrast <- "OwnD0 - Baseline"
 
 e2_prob_diffs_plot <- ggplot(e2_diffs, aes(x = ev, y = predicted, color = condition, fill = condition)) +
-  geom_hline(yintercept = 0, linetype = "dashed") +
-  geom_vline(xintercept = 10, linetype = "dashed") +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey30") +
+  geom_vline(xintercept = 10, linetype = "dashed", color = "grey30") +
   geom_line(aes(linetype = condition), linewidth = 1, color = "black") +
   scale_linetype_manual(values = c("solid", "dotted")) +
   scale_color_grey() +
   scale_fill_grey() +
   coord_cartesian(ylim = c(-0.5, 0.5)) +
   cowplot::theme_cowplot() +
-  theme(legend.position = "bottom") +
   labs(
     title = "Influence by Expected Value",
     x = "Gamble Expected Value (Money)",
@@ -546,7 +544,8 @@ e2_prob_diffs_plot <- ggplot(e2_diffs, aes(x = ev, y = predicted, color = condit
   theme(
     legend.position = "bottom",
     legend.justification = c(0.5, 0.5),
-    panel.spacing = unit(2, "lines"),
+    legend.key.width = unit(2, "lines"),
+    panel.spacing = unit(1.2, "lines"),
     plot.title = element_text(hjust = 0.5),
     panel.border = element_rect(color = "black"),
     strip.background = element_rect(fill = "transparent")
@@ -554,16 +553,16 @@ e2_prob_diffs_plot <- ggplot(e2_diffs, aes(x = ev, y = predicted, color = condit
 
 # Group probability plot
 e2_group_plot <- ggplot(e2_emmeans_df, aes(x = phase, y = prob, fill = condition)) +
-  geom_hline(yintercept = 0.5, linetype = "dashed") +
-  geom_col(width = 0.75, position = position_dodge(width = 0.75), color = "black", alpha = 0.8) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey30") +
+  geom_col(width = 0.5, position = position_dodge(width = 0.5), color = "black") +
   geom_errorbar(
     aes(ymin = asymp.LCL, ymax = asymp.UCL),
-    width = 0.1, position = position_dodge(width = 0.75)
+    width = 0.08, position = position_dodge(width = 0.5)
   ) +
-  scale_fill_grey() +
+  scale_fill_manual(values = c("Risk Averse" = "#5C5C5C", "Risk Seeking" = "#D6D6D6")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.25), expand = expansion(mult = c(0, 0.05))) +
   coord_cartesian(ylim = c(0, 1)) +
   cowplot::theme_cowplot() +
-  theme(legend.position = "bottom") +
   labs(
     title = "Gamble Acceptance by Phase",
     x = "Phase",
@@ -574,25 +573,27 @@ e2_group_plot <- ggplot(e2_emmeans_df, aes(x = phase, y = prob, fill = condition
   theme(
     legend.position = "bottom",
     legend.justification = c(0.5, 0.5),
-    panel.spacing = unit(1, "lines"),
+    panel.spacing = unit(1.2, "lines"),
     plot.title = element_text(hjust = 0.5),
-    strip.background = element_rect(fill = "transparent")
+    strip.background = element_rect(fill = "transparent"),
+    strip.text = element_text(size = 11.5, margin = margin(b = 6, t = 4))
   )
 
 # Group difference plot
 e2_group_diffs_plot <- ggplot(e2_contrasts_subset, aes(x = condition, y = estimate, fill = condition)) +
-  geom_hline(yintercept = 0, linetype = "dashed") +
-  geom_col(width = 0.35, position = position_dodge(width = 0.35), color = "black", alpha = 0.8) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey30") +
+  geom_col(width = 0.28, position = position_dodge(width = 0.28), color = "black") +
   geom_errorbar(
     aes(ymin = asymp.LCL, ymax = asymp.UCL),
-    width = 0.1, position = position_dodge(width = 0.35)
+    width = 0.07, position = position_dodge(width = 0.28)
   ) +
   geom_text(
-    aes(label = p_lab, y = ifelse(estimate > 0, (asymp.UCL + 0.05), (asymp.LCL - 0.1))),
-    position = position_dodge(width = 0.35)
+    aes(label = p_lab, y = ifelse(estimate > 0, (asymp.UCL + 0.055), (asymp.LCL - 0.075))),
+    position = position_dodge(width = 0.28), size = 3.8
   ) +
-  scale_fill_grey() +
-  coord_cartesian(ylim = c(-0.5, 0.5)) +
+  scale_fill_manual(values = c("Risk Averse" = "#5C5C5C", "Risk Seeking" = "#D6D6D6")) +
+  scale_y_continuous(breaks = seq(-0.5, 0.5, 0.25)) +
+  coord_cartesian(ylim = c(-0.52, 0.55)) +
   cowplot::theme_cowplot() +
   ggsignif::geom_signif(
     stat = "identity", data = all_contrast_pairs[all_contrast_pairs$frame == "Money", ],
@@ -612,9 +613,10 @@ e2_group_diffs_plot <- ggplot(e2_contrasts_subset, aes(x = condition, y = estima
     legend.position = "none",
     legend.justification = 0.5,
     plot.title = element_text(hjust = 0.5),
-    plot.subtitle = element_text(hjust = 0.5),
-    panel.spacing = unit(1, "lines"),
-    strip.background = element_rect(fill = "transparent")
+    plot.subtitle = element_text(hjust = 0.5, size = 10.5, color = "grey25", margin = margin(b = 6)),
+    panel.spacing = unit(1.2, "lines"),
+    strip.background = element_rect(fill = "transparent"),
+    strip.text = element_text(size = 11.5, margin = margin(b = 6, t = 4))
   )
 
 fig4 <- e2_prob_plot + e2_prob_diffs_plot + e2_group_plot + e2_group_diffs_plot +
@@ -706,7 +708,7 @@ condition_frame_pairs_df$p_lab <- with(
 )
 condition_frame_pairs_df$x <- 1
 condition_frame_pairs_df$xend <- 2
-condition_frame_pairs_df$y <- c(-0.4, 0.4)
+condition_frame_pairs_df$y <- 0.45
 
 # Domain by frame contrast at baseline
 domain_frame_contrast <- emmeans(
@@ -746,8 +748,8 @@ bind_rows(
   transmute(
     Domain = as.character(domain),
     Contrast = Contrast,
-    `ΔP [95% CI]` = sprintf("%.2f [%.2f, %.2f]", estimate, asymp.LCL, asymp.UCL),
-    z = sprintf("%.2f", z.ratio),
+    `ΔP [95% CI]` = sprintf("%s [%s, %s]", fmt_num(estimate), fmt_num(asymp.LCL), fmt_num(asymp.UCL)),
+    z = fmt_num(z.ratio),
     p = fmt_p(p.value)
   ) %>%
   knitr::kable(align = "llrrr")
@@ -762,13 +764,14 @@ Across the pooled sample, expected value strongly predicted choice in both Gains
 
 # Group probability plot
 combined_group_plot <- ggplot(combined_emmeans_df, aes(x = condition, y = prob, fill = frame)) +
-  geom_hline(yintercept = 0.5, linetype = "dashed") +
-  geom_col(width = 0.75, position = position_dodge(width = 0.75), color = "black", alpha = 0.8) +
+  geom_hline(yintercept = 0.5, linetype = "dashed", color = "grey30") +
+  geom_col(width = 0.5, position = position_dodge(width = 0.5), color = "black") +
   geom_errorbar(
     aes(ymin = asymp.LCL, ymax = asymp.UCL),
-    width = 0.1, position = position_dodge(width = 0.75)
+    width = 0.08, position = position_dodge(width = 0.5)
   ) +
-  scale_fill_manual(values = c("black", "white")) +
+  scale_fill_manual(values = c("Lives" = "#333333", "Money" = "#FFFFFF")) +
+  scale_y_continuous(breaks = seq(0, 1, 0.25), expand = expansion(mult = c(0, 0.05))) +
   coord_cartesian(ylim = c(0, 1)) +
   cowplot::theme_cowplot() +
   labs(
@@ -782,26 +785,28 @@ combined_group_plot <- ggplot(combined_emmeans_df, aes(x = condition, y = prob, 
     legend.position = "bottom",
     legend.justification = 0.5,
     plot.title = element_text(hjust = 0.5),
-    panel.spacing = unit(1, "lines"),
-    strip.background = element_rect(fill = "transparent")
+    panel.spacing = unit(1.2, "lines"),
+    strip.background = element_rect(fill = "transparent"),
+    strip.text = element_text(size = 11.5, margin = margin(b = 6, t = 4))
   )
 
 # Group difference plot
 combined_contrasts_subset <- combined_contrasts_df[grepl("Money - Lives", combined_contrasts_df$contrast), ]
 
 combined_group_diffs_plot <- ggplot(combined_contrasts_subset, aes(x = condition, y = estimate, fill = condition)) +
-  geom_hline(yintercept = 0, linetype = "dashed") +
-  geom_col(width = 0.35, position = position_dodge(width = 0.35), color = "black", alpha = 0.8) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey30") +
+  geom_col(width = 0.28, position = position_dodge(width = 0.28), color = "black") +
   geom_errorbar(
     aes(ymin = asymp.LCL, ymax = asymp.UCL),
-    width = 0.1, position = position_dodge(width = 0.35)
+    width = 0.07, position = position_dodge(width = 0.28)
   ) +
   geom_text(
-    aes(label = p_lab, y = ifelse(estimate > 0, (asymp.UCL + 0.05), (asymp.LCL - 0.1))),
-    position = position_dodge(width = 0.35)
+    aes(label = p_lab, y = ifelse(estimate > 0, (asymp.UCL + 0.055), (asymp.LCL - 0.075))),
+    position = position_dodge(width = 0.28), size = 3.8
   ) +
-  scale_fill_grey() +
-  coord_cartesian(ylim = c(-0.5, 0.5)) +
+  scale_fill_manual(values = c("Risk Averse" = "#5C5C5C", "Risk Seeking" = "#D6D6D6")) +
+  scale_y_continuous(breaks = seq(-0.5, 0.5, 0.25)) +
+  coord_cartesian(ylim = c(-0.52, 0.55)) +
   cowplot::theme_cowplot() +
   labs(
     title = "Difference in Gamble Acceptance",
@@ -815,9 +820,10 @@ combined_group_diffs_plot <- ggplot(combined_contrasts_subset, aes(x = condition
     legend.position = "none",
     legend.justification = 0.5,
     plot.title = element_text(hjust = 0.5),
-    plot.subtitle = element_text(hjust = 0.5),
-    panel.spacing = unit(1, "lines"),
-    strip.background = element_rect(fill = "transparent")
+    plot.subtitle = element_text(hjust = 0.5, size = 10.5, color = "grey25", margin = margin(b = 6)),
+    panel.spacing = unit(1.2, "lines"),
+    strip.background = element_rect(fill = "transparent"),
+    strip.text = element_text(size = 11.5, margin = margin(b = 6, t = 4))
   )
 
 # Plot differences in influence between conditions
@@ -828,12 +834,12 @@ condition_influence_plot <- all_contrast_pairs %>%
     upper.CL_abs = if_else(asymp.UCL < 0, abs(asymp.UCL), NA_real_)
   ) %>%
   ggplot(aes(x = frame, y = estimate, fill = frame)) +
-  geom_hline(yintercept = 0, linetype = "dashed") +
-  geom_col(width = 0.35, position = position_dodge(width = 0.35), color = "black", alpha = 0.8) +
-  geom_errorbar(aes(ymin = asymp.LCL, ymax = asymp.UCL), width = 0.1, position = position_dodge(width = 0.35)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey30") +
+  geom_col(width = 0.28, position = position_dodge(width = 0.28), color = "black") +
+  geom_errorbar(aes(ymin = asymp.LCL, ymax = asymp.UCL), width = 0.07, position = position_dodge(width = 0.28)) +
   geom_text(
-    aes(label = p_lab, y = ifelse(estimate > 0, (asymp.UCL + 0.05), (asymp.LCL - 0.05))),
-    position = position_dodge(width = 0.35)
+    aes(label = p_lab, y = ifelse(estimate > 0, (asymp.UCL + 0.055), (asymp.LCL - 0.075))),
+    position = position_dodge(width = 0.28), size = 3.8
   ) +
   ggsignif::geom_signif(
     stat = "identity", data = condition_frame_pairs_df,
@@ -843,22 +849,24 @@ condition_influence_plot <- all_contrast_pairs %>%
   ) +
   labs(
     title = "Relative Difference in Influence Between Conditions",
-    subtitle = "Positive value indicate risk averse norms are more influential\nNegative values indicate risk seeking norms are more influential",
+    subtitle = "Positive values indicate risk averse norms are more influential\nNegative values indicate risk seeking norms are more influential",
     x = "Domain",
     y = "Relative Influence\n(D0: Risk Averse - Risk Seeking)",
     fill = "Version"
   ) +
-  coord_cartesian(ylim = c(-0.5, 0.5)) +
-  scale_fill_manual(values = c("black", "white")) +
+  scale_y_continuous(breaks = seq(-0.5, 0.5, 0.25)) +
+  coord_cartesian(ylim = c(-0.52, 0.55)) +
+  scale_fill_manual(values = c("Lives" = "#333333", "Money" = "#FFFFFF")) +
   cowplot::theme_cowplot() +
   facet_wrap(~domain) +
   theme(
     legend.position = "none",
     legend.justification = c(0.5, 0.5),
-    panel.spacing = unit(1, "lines"),
+    panel.spacing = unit(1.2, "lines"),
     plot.title = element_text(hjust = 0.5),
-    plot.subtitle = element_text(hjust = 0.5),
-    strip.background = element_rect(fill = "transparent")
+    plot.subtitle = element_text(hjust = 0.5, size = 10.5, color = "grey25", margin = margin(b = 6)),
+    strip.background = element_rect(fill = "transparent"),
+    strip.text = element_text(size = 11.5, margin = margin(b = 6, t = 4))
   )
 
 # Plot differences in influence between domains
@@ -869,12 +877,12 @@ domain_influence_plot <- frame_condition_pairs %>%
     upper.CL_abs = if_else(asymp.UCL < 0, abs(asymp.UCL), NA_real_)
   ) %>%
   ggplot(aes(x = condition, y = estimate, fill = condition)) +
-  geom_hline(yintercept = 0, linetype = "dashed") +
-  geom_col(width = 0.35, position = position_dodge(width = 0.35), color = "black", alpha = 0.8) +
-  geom_errorbar(aes(ymin = asymp.LCL, ymax = asymp.UCL), width = 0.1, position = position_dodge(width = 0.35)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "grey30") +
+  geom_col(width = 0.28, position = position_dodge(width = 0.28), color = "black") +
+  geom_errorbar(aes(ymin = asymp.LCL, ymax = asymp.UCL), width = 0.07, position = position_dodge(width = 0.28)) +
   geom_text(
-    aes(label = p_lab, y = ifelse(estimate > 0, (asymp.UCL + 0.05), (asymp.LCL - 0.05))),
-    position = position_dodge(width = 0.35)
+    aes(label = p_lab, y = ifelse(estimate > 0, (asymp.UCL + 0.055), (asymp.LCL - 0.075))),
+    position = position_dodge(width = 0.28), size = 3.8
   ) +
   labs(
     title = "Relative Difference in Influence Between Domains",
@@ -883,17 +891,19 @@ domain_influence_plot <- frame_condition_pairs %>%
     y = "Relative Influence\n(D0: Money - Lives)",
     fill = "Version"
   ) +
-  coord_cartesian(ylim = c(-0.5, 0.5)) +
-  scale_fill_grey() +
+  scale_y_continuous(breaks = seq(-0.5, 0.5, 0.25)) +
+  coord_cartesian(ylim = c(-0.52, 0.55)) +
+  scale_fill_manual(values = c("Risk Averse" = "#5C5C5C", "Risk Seeking" = "#D6D6D6")) +
   cowplot::theme_cowplot() +
   facet_wrap(~domain) +
   theme(
     legend.position = "none",
     legend.justification = c(0.5, 0.5),
-    panel.spacing = unit(1, "lines"),
+    panel.spacing = unit(1.2, "lines"),
     plot.title = element_text(hjust = 0.5),
-    plot.subtitle = element_text(hjust = 0.5),
-    strip.background = element_rect(fill = "transparent")
+    plot.subtitle = element_text(hjust = 0.5, size = 10.5, color = "grey25", margin = margin(b = 6)),
+    strip.background = element_rect(fill = "transparent"),
+    strip.text = element_text(size = 11.5, margin = margin(b = 6, t = 4))
   )
 
 fig6 <- combined_group_plot + combined_group_diffs_plot +
