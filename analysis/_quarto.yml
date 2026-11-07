@@ -1,0 +1,38 @@
+project:
+  type: website
+  output-dir: _site
+  render:
+    - day0.qmd
+    - day3.qmd
+    - index.qmd
+
+website:
+  title: "Moral & Monetary Gambles Conformity"
+  navbar:
+    left:
+      - href: day0.qmd
+        text: Immediate Conformity
+      - href: day3.qmd
+        text: Persistence
+    right:
+      - text: Paper
+        href: https://doi.org/10.1038/s41598-023-27462-1
+      - icon: github
+        href: https://github.com/pmarcowski/moral-gambles-conformity
+  search: true
+
+knitr:
+  opts_chunk:
+    message: false
+    warning: false
+
+format:
+  html:
+    theme: [default, mgc.scss]
+    toc: true
+    toc-depth: 3
+    toc-expand: true
+    number-sections: false
+    code-fold: true
+    code-tools: true
+    df-print: kable

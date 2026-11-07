@@ -1,16 +1,29 @@
-# Day 3 Analysis Script
-#
-# This script analyzes data from day 3 (OwnD3 and Others phases) and compares
-# it to baseline data from day 0 to investigate the persistence and transfer
-# of norm influence.
+---
+title: "Persistence & Transfer (Day 3)"
+subtitle: "Three-day follow-up of social norm conformity across moral and monetary domains"
+author: "Przemek Marcowski"
+---
 
-# Load packages
+This notebook analyzes the three-day follow-up assessment against Day 0 across Experiment 1 (moral domain: animal lives) and Experiment 2 (monetary domain: dollars). The primary test is whether conformity shifts induced on Day 0 persist three days later and whether asymmetries between risk-averse and risk-seeking norms endure over the delay.
+
+| Section | Focus |
+|---|---|
+| Sample & Model Fitting | Four-phase mixed-effects logistic regression models for Experiment 1, Experiment 2, and pooled data |
+| Experiment 1: Moral Domain (Lives) | Persistence of conformity after three days and comparison across all four phases |
+| Experiment 2: Monetary Domain (Money) | Persistence of conformity after three days and comparison across all four phases |
+
+```{r setup}
 library(tidyverse)
 library(glmmTMB)
 library(emmeans)
 library(easystats)
 library(patchwork)
 library(ggsignif)
+library(here)
+
+here::i_am("analysis/day3.qmd")
+set.seed(42)
+dir.create(here("output"), showWarnings = FALSE)
 
 # Define factor levels for consistent ordering
 TIME_LEVELS <- c("Dayone", "Followup")
@@ -19,79 +32,108 @@ CONDITION_LEVELS <- c("Risk Averse", "Risk Seeking")
 DOMAIN_LEVELS <- c("Gains", "Losses")
 FRAME_LEVELS <- c("Lives", "Money")
 
-# Load Data ---------------------------------------------------------------
+fmt_p <- function(p) {
+  ifelse(p < 0.001, "< .001", sub("^0", "", sprintf("%.3f", p)))
+}
 
-# Load experiment 1 data (Lives frame)
-e1_data_full <- readRDS("data/prepared/experiment1.Rds")
+fmt_conformity_table <- function(phase_df, pair_df, phase_label = "OwnD3") {
+  bind_rows(
+    phase_df %>%
+      transmute(
+        domain = factor(domain, levels = DOMAIN_LEVELS),
+        ord = if_else(condition == "Risk Averse", 1L, 2L),
+        Contrast = paste0(condition, " (", phase_label, " \u2212 Baseline)"),
+        estimate, asymp.LCL, asymp.UCL, z.ratio, p.value
+      ),
+    pair_df %>%
+      transmute(
+        domain = factor(domain, levels = DOMAIN_LEVELS),
+        ord = 3L,
+        Contrast = "Norm asymmetry (|\u0394 Risk Averse| \u2212 |\u0394 Risk Seeking|)",
+        estimate, asymp.LCL, asymp.UCL, z.ratio, p.value
+      )
+  ) %>%
+    arrange(domain, ord) %>%
+    transmute(
+      Domain = as.character(domain),
+      Contrast = Contrast,
+      `ΔP [95% CI]` = sprintf("%.2f [%.2f, %.2f]", estimate, asymp.LCL, asymp.UCL),
+      z = sprintf("%.2f", z.ratio),
+      p = fmt_p(p.value)
+    ) %>%
+    knitr::kable(align = "llrrr")
+}
+```
+
+# Sample & Model Fitting
+
+Each experiment is analyzed across all four assessment phases: baseline and immediate post-exposure on Day 0, followed by personal choices and predictions of another group's choices on Day 3.
+
+```{r load-data}
+# Load Experiment 1 data (Lives frame)
+e1_data_full <- readRDS(here("data/experiment1.Rds"))
 e1_data <- e1_data_full %>%
-  filter(phase %in% PHASE_LEVELS) %>% # Keep Baseline for comparison
+  filter(phase %in% PHASE_LEVELS) %>%
   mutate(
     time = factor(time, levels = TIME_LEVELS),
     condition = factor(condition, levels = CONDITION_LEVELS),
     phase = factor(phase, levels = PHASE_LEVELS),
     domain = factor(domain, levels = DOMAIN_LEVELS)
   ) %>%
-  select(-age, -influence_score, -comprehensionCorrectPercentage, -gamble_value_base) # Remove unused cols
+  select(-age, -influence_score, -comprehensionCorrectPercentage, -gamble_value_base)
 
-# Load experiment 2 data (Money frame)
-e2_data_full <- readRDS("data/prepared/experiment2.Rds")
+# Load Experiment 2 data (Money frame)
+e2_data_full <- readRDS(here("data/experiment2.Rds"))
 e2_data <- e2_data_full %>%
-  filter(phase %in% PHASE_LEVELS) %>% # Keep Baseline for comparison
+  filter(phase %in% PHASE_LEVELS) %>%
   mutate(
     time = factor(time, levels = TIME_LEVELS),
     condition = factor(condition, levels = CONDITION_LEVELS),
     phase = factor(phase, levels = PHASE_LEVELS),
     domain = factor(domain, levels = DOMAIN_LEVELS)
   ) %>%
-  select(-age, -influence_score, -comprehensionCorrectPercentage, -gamble_value_base) # Remove unused cols
+  select(-age, -influence_score, -comprehensionCorrectPercentage, -gamble_value_base)
 
 # Combine both experiments for joint analysis
 combined_data <- bind_rows(e1_data, e2_data) %>%
   mutate(frame = factor(frame, levels = FRAME_LEVELS))
+```
 
-# Model Fitting -----------------------------------------------------------
+We fit mixed-effects logistic regression models across all four phases for Experiment 1, Experiment 2, and the pooled dataset, with random intercepts for participants.
 
-# Create model formula for experiment 1 (Lives frame) - includes Baseline, OwnD3, Others
-e1_formula_d3 <- formula(choice ~ ev * phase * condition * domain + (1|id))
+```{r model-fitting}
+# Model formulas across Baseline, OwnD0, OwnD3, Others
+e1_formula_d3 <- formula(choice ~ ev * phase * condition * domain + (1 | id))
+e2_formula_d3 <- formula(choice ~ ev * phase * condition * domain + (1 | id))
+combined_formula_d3 <- formula(choice ~ ev * phase * condition * domain * frame + (1 | id))
 
-# Create model formula for experiment 2 (Money frame) - includes Baseline, OwnD3, Others
-e2_formula_d3 <- formula(choice ~ ev * phase * condition * domain + (1|id))
-
-# Create model formula for combined data - includes Baseline, OwnD3, Others
-combined_formula_d3 <- formula(choice ~ ev * phase * condition * domain * frame + (1|id))
-
-# Set model control parameters
+# Model control parameters
 model_control <- glmmTMBControl(
   optCtrl = list(iter.max = 1e+3, eval.max = 1e+3),
-  parallel = (parallel::detectCores() - 1)
+  parallel = min(4L, max(1L, parallel::detectCores() - 1L))
 )
 
-# Check if models already exist
-model_file_path <- file.path("output/models_day3.Rds")
+model_file_path <- here("output/models_day3.Rds")
 
 if (!file.exists(model_file_path)) {
-  # Fit model for experiment 1 (Lives frame)
   e1_model_d3 <- glmmTMB(
     e1_formula_d3, data = e1_data,
     family = binomial(link = "logit"),
     control = model_control
   )
 
-  # Fit model for experiment 2 (Money frame)
   e2_model_d3 <- glmmTMB(
     e2_formula_d3, data = e2_data,
     family = binomial(link = "logit"),
     control = model_control
   )
 
-  # Fit model for combined data
   combined_model_d3 <- glmmTMB(
     combined_formula_d3, data = combined_data,
     family = binomial(link = "logit"),
     control = model_control
   )
 
-  # Save models
   models_d3 <- list(e1_model_d3, e2_model_d3, combined_model_d3)
   saveRDS(models_d3, file = model_file_path)
 } else {
@@ -100,31 +142,36 @@ if (!file.exists(model_file_path)) {
   e2_model_d3 <- models_d3[[2]]
   combined_model_d3 <- models_d3[[3]]
 }
+```
 
-# Post-Hoc Analyses ------------------------------------------------------
+# Experiment 1: Moral Domain (Lives)
 
-## Experiment 1 (Lives) ----
+In Experiment 1, we estimate predicted choice probabilities across expected value at baseline and the three-day follow-up, marginal gamble acceptance across all four phases, within-condition persistence contrasts from baseline to Day 3, and the interaction contrast comparing risk-averse and risk-seeking norm persistence.
 
-# Calculate predicted probabilities for plotting (Baseline vs OwnD3)
+```{r e1-d3-contrasts}
+# Predicted probabilities for plotting (Baseline vs. OwnD3)
 e1_predicted_probs_d3 <- estimate_means(
   e1_model_d3,
   by = c("phase = c('Baseline', 'OwnD3')", "condition", "domain", "ev"),
   length = 100
 )
 
-# Calculate marginal means and contrasts (OwnD3 vs Baseline)
-e1_emmeans_d3 <- emmeans(
+# Marginal means and contrasts across all four phases
+e1_emmeans_d3 <- withr::with_seed(42, emmeans(
   e1_model_d3, revpairwise ~ phase | condition | domain,
   regrid = "response", infer = TRUE, adjust = "mvt",
   at = list(phase = c("Baseline", "OwnD0", "OwnD3", "Others"))
-)
+))
+e1_emmeans_df_d3 <- as.data.frame(e1_emmeans_d3$emmeans)
+e1_contrasts_df_d3 <- as.data.frame(e1_emmeans_d3$contrasts) %>%
+  mutate(p_lab = cut(p.value, c(-Inf, 0.001, 0.01, 0.05, Inf), labels = c("***", "**", "*", "ns")))
+e1_contrasts_subset_d3 <- e1_contrasts_df_d3[grepl("OwnD3 - Baseline", e1_contrasts_df_d3$contrast), ]
 
-# Calculate contrasts of contrasts (interaction effect)
-# Compare (OwnD3 - Baseline) difference between Risk Averse and Risk Seeking
+# Contrasts of contrasts: (Baseline - OwnD3)[Risk Averse] vs. (OwnD3 - Baseline)[Risk Seeking]
 e1_conds_emmeans_d3 <- emmeans(
-  e1_model_d3, ~condition*phase|domain,
+  e1_model_d3, ~ condition * phase | domain,
   regrid = "response",
-  at = list(phase = c("OwnD3", "Baseline")),
+  at = list(phase = c("OwnD3", "Baseline"))
 )
 
 e1_contrasts_d3 <- contrast(
@@ -146,63 +193,23 @@ e1_contrast_pairs_d3$x <- 1
 e1_contrast_pairs_d3$xend <- 2
 e1_contrast_pairs_d3$y <- 0.475
 
-## Experiment 2 (Money) ----
+fmt_conformity_table(e1_contrasts_subset_d3, e1_contrast_pairs_d3, "OwnD3")
+```
 
-# Calculate predicted probabilities for plotting (Baseline vs OwnD3)
-e2_predicted_probs_d3 <- estimate_means(
-  e2_model_d3,
-  by = c("phase = c('Baseline', 'OwnD3')", "condition", "domain", "ev"),
-  length = 100
-)
+Three days after norm exposure, participants in the moral domain continued to conform to both risk-averse and risk-seeking norms across Gains and Losses. Choice probabilities did not decay significantly between Day 0 and Day 3 in any cell (Gains Risk Averse: Δ*P* = 0.03, 95% CI [0.00, 0.07], *z* = 2.44, *p* = .055; Gains Risk Seeking: Δ*P* = 0.06, 95% CI [-0.02, 0.13], *z* = 2.01, *p* = .181; Losses Risk Averse: Δ*P* = -0.04, 95% CI [-0.09, 0.01], *z* = -2.08, *p* = .137; Losses Risk Seeking: Δ*P* = -0.03, 95% CI [-0.12, 0.05], *z* = -1.02, *p* = .738). As on Day 0, risk-averse norms remained significantly more influential than risk-seeking norms in Losses, while the two norms did not differ significantly in Gains. When predicting another group's decisions on Day 3, participants expected choices to remain shifted from baseline in the norm-consistent direction across all cells (*p*s < .001), matching their own Day 3 choices in the Risk Averse condition (Gains: Δ*P* = -0.01, *p* = .899; Losses: Δ*P* = 0.01, *p* = .963) and exceeding their own Day 3 gamble acceptance in the Risk Seeking condition (Gains: Δ*P* = 0.14, *p* < .001; Losses: Δ*P* = 0.19, *p* < .001).
 
-# Calculate marginal means and contrasts (OwnD3 vs Baseline)
-e2_emmeans_d3 <- emmeans(
-  e2_model_d3, revpairwise ~ phase | condition | domain,
-  regrid = "response", infer = TRUE, adjust = "mvt",
-  at = list(phase = c("Baseline", "OwnD0", "OwnD3", "Others"))
-)
+```{r fig3}
+#| fig-width: 15
+#| fig-height: 10.5
+#| fig-cap: "Persistence of conformity in the moral domain (Experiment 1, Lives) on Day 3. (a) Gamble acceptance probability as a function of expected value at Baseline and OwnD3. (b) Marginal probability of gambling across Day 0 (Baseline, OwnD0) and Day 3 (OwnD3, Others) phases. (c) Difference in gambling probability (OwnD3 minus Baseline) across expected value. (d) Marginal difference in gambling probability (OwnD3 minus Baseline) by condition and domain."
 
-# Calculate contrasts of contrasts (interaction effect)
-# Compare (OwnD3 - Baseline) difference between Risk Averse and Risk Seeking
-e2_conds_emmeans_d3 <- emmeans(
-  e2_model_d3, ~condition*phase|domain,
-  regrid = "response",
-  at = list(phase = c("OwnD3", "Baseline"))
-)
-
-e2_contrasts_d3 <- contrast(
-  e2_conds_emmeans_d3,
-  list(
-    `Baseline Risk Averse - OwnD3 Risk Averse` = c(-1, 0, 1, 0),
-    `OwnD3 Risk Seeking - Baseline Risk Seeking` = c(0, 1, 0, -1)
-  )
-)
-
-e2_contrast_pairs_d3 <- as.data.frame(pairs(e2_contrasts_d3, infer = TRUE))
-e2_contrast_pairs_d3$frame <- "Money"
-e2_contrast_pairs_d3$p_sig <- with(e2_contrast_pairs_d3, ifelse(p.value < 0.05, "*", ""))
-e2_contrast_pairs_d3$p_lab <- with(
-  e2_contrast_pairs_d3,
-  cut(p.value, c(-Inf, 0.001, 0.01, 0.05, Inf), labels = c("***", "**", "*", "ns"))
-)
-e2_contrast_pairs_d3$x <- 1
-e2_contrast_pairs_d3$xend <- 2
-e2_contrast_pairs_d3$y <- 0.475
-
-# Combine contrast pairs for plotting annotations
-all_contrast_pairs_d3 <- rbind(e1_contrast_pairs_d3, e2_contrast_pairs_d3)
-
-# Create Plots -----------------------------------------------------------
-
-# Create plots for Experiment 1 (Lives) - Day 3
-
-# Probability by EV plot (Baseline vs OwnD3)
+# Probability by EV plot (Baseline vs. OwnD3)
 e1_prob_data_d3 <- e1_predicted_probs_d3
 
 e1_prob_plot_d3 <- ggplot(e1_prob_data_d3, aes(x = ev, y = Probability, color = condition, fill = condition)) +
   geom_hline(yintercept = 0.5, linetype = "dashed") +
   geom_vline(xintercept = 10, linetype = "dashed") +
-  geom_line(size = 1, linetype = "solid") +
+  geom_line(linewidth = 1, linetype = "solid") +
   geom_ribbon(aes(ymin = CI_low, ymax = CI_high), alpha = 0.6, color = NA) +
   scale_color_grey() +
   scale_fill_grey() +
@@ -232,14 +239,14 @@ e1_own3_data_d3 <- e1_predicted_probs_d3[e1_predicted_probs_d3$phase == "OwnD3",
 
 e1_diffs_d3 <- e1_own3_data_d3
 e1_diffs_d3$predicted <- e1_own3_data_d3$Probability - e1_baseline_data_d3$Probability
-e1_diffs_d3$conf.low <- e1_own3_data_d3$CI_low - e1_baseline_data_d3$CI_low # Approximate CI
-e1_diffs_d3$conf.high <- e1_own3_data_d3$CI_high - e1_baseline_data_d3$CI_high # Approximate CI
+e1_diffs_d3$conf.low <- e1_own3_data_d3$CI_low - e1_baseline_data_d3$CI_low
+e1_diffs_d3$conf.high <- e1_own3_data_d3$CI_high - e1_baseline_data_d3$CI_high
 e1_diffs_d3$contrast <- "OwnD3 - Baseline"
 
 e1_prob_diffs_plot_d3 <- ggplot(e1_diffs_d3, aes(x = ev, y = predicted, color = condition, fill = condition)) +
   geom_hline(yintercept = 0, linetype = "dashed") +
   geom_vline(xintercept = 10, linetype = "dashed") +
-  geom_line(aes(linetype = condition), size = 1, color = "black") +
+  geom_line(aes(linetype = condition), linewidth = 1, color = "black") +
   scale_linetype_manual(values = c("solid", "dotted")) +
   scale_color_grey() +
   scale_fill_grey() +
@@ -263,9 +270,7 @@ e1_prob_diffs_plot_d3 <- ggplot(e1_diffs_d3, aes(x = ev, y = predicted, color = 
     strip.background = element_rect(fill = "transparent")
   )
 
-# Group probability plot (Baseline vs OwnD3)
-e1_emmeans_df_d3 <- as.data.frame(e1_emmeans_d3$emmeans)
-
+# Group probability plot across all four phases
 e1_group_plot_d3 <- ggplot(e1_emmeans_df_d3, aes(x = phase, y = prob, fill = condition)) +
   geom_hline(yintercept = 0.5, linetype = "dashed") +
   geom_col(width = 0.75, position = position_dodge(width = 0.75), color = "black", alpha = 0.8) +
@@ -295,11 +300,6 @@ e1_group_plot_d3 <- ggplot(e1_emmeans_df_d3, aes(x = phase, y = prob, fill = con
   )
 
 # Group difference plot (OwnD3 - Baseline)
-e1_contrasts_df_d3 <- as.data.frame(e1_emmeans_d3$contrasts) %>%
-  mutate(p_lab = cut(p.value, c(-Inf, 0.001, 0.01, 0.05, Inf), labels = c("***", "**", "*", "ns")))
-
-e1_contrasts_subset_d3 <- e1_contrasts_df_d3[grepl("OwnD3 - Baseline", e1_contrasts_df_d3$contrast), ]
-
 e1_group_diffs_plot_d3 <- ggplot(e1_contrasts_subset_d3, aes(x = condition, y = estimate, fill = condition)) +
   geom_hline(yintercept = 0, linetype = "dashed") +
   geom_col(width = 0.35, position = position_dodge(width = 0.35), color = "black", alpha = 0.8) +
@@ -307,7 +307,7 @@ e1_group_diffs_plot_d3 <- ggplot(e1_contrasts_subset_d3, aes(x = condition, y = 
     aes(ymin = asymp.LCL, ymax = asymp.UCL),
     width = 0.1, position = position_dodge(width = 0.35)
   ) +
-  geom_text( # Add significance labels
+  geom_text(
     aes(label = p_lab, y = ifelse(estimate > 0, (asymp.UCL + 0.05), (asymp.LCL - 0.1))),
     position = position_dodge(width = 0.35)
   ) +
@@ -315,7 +315,7 @@ e1_group_diffs_plot_d3 <- ggplot(e1_contrasts_subset_d3, aes(x = condition, y = 
   coord_cartesian(ylim = c(-0.5, 0.5)) +
   cowplot::theme_cowplot() +
   geom_signif(
-    stat = "identity", data = all_contrast_pairs_d3[all_contrast_pairs_d3$frame == "Lives", ],
+    stat = "identity", data = e1_contrast_pairs_d3,
     aes(x = x, xend = xend, y = y, yend = y, annotation = p_lab),
     comparisons = list("Risk Averse", "Risk Seeking"),
     inherit.aes = FALSE
@@ -337,15 +337,88 @@ e1_group_diffs_plot_d3 <- ggplot(e1_contrasts_subset_d3, aes(x = condition, y = 
     strip.background = element_rect(fill = "transparent")
   )
 
-# Create plots for Experiment 2 (Money) - Day 3
+layout <- "
+AACCC
+AACCC
+BBDDD
+"
 
-# Probability by EV plot (Baseline vs OwnD3)
+fig3 <- e1_prob_plot_d3 + e1_prob_diffs_plot_d3 + e1_group_plot_d3 + e1_group_diffs_plot_d3 +
+  plot_layout(design = layout) +
+  plot_annotation(tag_levels = list(c("a", "c", "b", "d")))
+
+ggsave(here("output/fig3.pdf"), fig3, scale = 1.5, width = 10, height = 7)
+fig3
+```
+
+# Experiment 2: Monetary Domain (Money)
+
+In Experiment 2, we estimate the corresponding baseline versus Day 3 choice curves, four-phase marginal means, three-day persistence shifts from baseline, and between-condition asymmetry contrasts.
+
+```{r e2-d3-contrasts}
+# Predicted probabilities for plotting (Baseline vs. OwnD3)
+e2_predicted_probs_d3 <- estimate_means(
+  e2_model_d3,
+  by = c("phase = c('Baseline', 'OwnD3')", "condition", "domain", "ev"),
+  length = 100
+)
+
+# Marginal means and contrasts across all four phases
+e2_emmeans_d3 <- withr::with_seed(42, emmeans(
+  e2_model_d3, revpairwise ~ phase | condition | domain,
+  regrid = "response", infer = TRUE, adjust = "mvt",
+  at = list(phase = c("Baseline", "OwnD0", "OwnD3", "Others"))
+))
+e2_emmeans_df_d3 <- as.data.frame(e2_emmeans_d3$emmeans)
+e2_contrasts_df_d3 <- as.data.frame(e2_emmeans_d3$contrasts) %>%
+  mutate(p_lab = cut(p.value, c(-Inf, 0.001, 0.01, 0.05, Inf), labels = c("***", "**", "*", "ns")))
+e2_contrasts_subset_d3 <- e2_contrasts_df_d3[grepl("OwnD3 - Baseline", e2_contrasts_df_d3$contrast), ]
+
+# Contrasts of contrasts: (Baseline - OwnD3)[Risk Averse] vs. (OwnD3 - Baseline)[Risk Seeking]
+e2_conds_emmeans_d3 <- emmeans(
+  e2_model_d3, ~ condition * phase | domain,
+  regrid = "response",
+  at = list(phase = c("OwnD3", "Baseline"))
+)
+
+e2_contrasts_d3 <- contrast(
+  e2_conds_emmeans_d3,
+  list(
+    `Baseline Risk Averse - OwnD3 Risk Averse` = c(-1, 0, 1, 0),
+    `OwnD3 Risk Seeking - Baseline Risk Seeking` = c(0, 1, 0, -1)
+  )
+)
+
+e2_contrast_pairs_d3 <- as.data.frame(pairs(e2_contrasts_d3, infer = TRUE))
+e2_contrast_pairs_d3$frame <- "Money"
+e2_contrast_pairs_d3$p_sig <- with(e2_contrast_pairs_d3, ifelse(p.value < 0.05, "*", ""))
+e2_contrast_pairs_d3$p_lab <- with(
+  e2_contrast_pairs_d3,
+  cut(p.value, c(-Inf, 0.001, 0.01, 0.05, Inf), labels = c("***", "**", "*", "ns"))
+)
+e2_contrast_pairs_d3$x <- 1
+e2_contrast_pairs_d3$xend <- 2
+e2_contrast_pairs_d3$y <- 0.475
+
+all_contrast_pairs_d3 <- rbind(e1_contrast_pairs_d3, e2_contrast_pairs_d3)
+
+fmt_conformity_table(e2_contrasts_subset_d3, e2_contrast_pairs_d3, "OwnD3")
+```
+
+In the monetary domain, the framing-dependent conformity pattern observed on Day 0 persisted at the three-day follow-up: in Gains, both risk-seeking and risk-averse norms differed significantly from baseline, with risk-seeking norms continuing to exert a much larger shift than risk-averse norms, whereas in Losses, risk-averse norms continued to reduce gambling strongly relative to baseline while risk-seeking norms showed no shift. Between Day 0 and Day 3, gamble acceptance was unchanged in Gains Risk Averse (Δ*P* = -0.03, 95% CI [-0.08, 0.01], *z* = -1.92, *p* = .215), Gains Risk Seeking (Δ*P* = 0.00, 95% CI [-0.07, 0.08], *z* = 0.16, *p* = .999), and Losses Risk Seeking (Δ*P* = -0.02, 95% CI [-0.09, 0.05], *z* = -0.79, *p* = .861), with partial rebound toward baseline in Losses Risk Averse (Δ*P* = 0.08, 95% CI [0.01, 0.14], *z* = 3.03, *p* = .013). Predictions for another group on Day 3 differed from baseline in the norm-consistent direction across all four cells (*p*s ≤ .001).
+
+```{r fig5}
+#| fig-width: 15
+#| fig-height: 10.5
+#| fig-cap: "Persistence of conformity in the monetary domain (Experiment 2, Money) on Day 3. (a) Gamble acceptance probability as a function of expected value at Baseline and OwnD3. (b) Marginal probability of gambling across Day 0 (Baseline, OwnD0) and Day 3 (OwnD3, Others) phases. (c) Difference in gambling probability (OwnD3 minus Baseline) across expected value. (d) Marginal difference in gambling probability (OwnD3 minus Baseline) by condition and domain."
+
+# Probability by EV plot (Baseline vs. OwnD3)
 e2_prob_data_d3 <- e2_predicted_probs_d3
 
 e2_prob_plot_d3 <- ggplot(e2_prob_data_d3, aes(x = ev, y = Probability, color = condition, fill = condition)) +
   geom_hline(yintercept = 0.5, linetype = "dashed") +
   geom_vline(xintercept = 10, linetype = "dashed") +
-  geom_line(size = 1, linetype = "solid") +
+  geom_line(linewidth = 1, linetype = "solid") +
   geom_ribbon(aes(ymin = CI_low, ymax = CI_high), alpha = 0.6, color = NA) +
   scale_color_grey() +
   scale_fill_grey() +
@@ -375,14 +448,14 @@ e2_own3_data_d3 <- e2_predicted_probs_d3[e2_predicted_probs_d3$phase == "OwnD3",
 
 e2_diffs_d3 <- e2_own3_data_d3
 e2_diffs_d3$predicted <- e2_own3_data_d3$Probability - e2_baseline_data_d3$Probability
-e2_diffs_d3$conf.low <- e2_own3_data_d3$CI_low - e2_baseline_data_d3$CI_low # Approximate CI
-e2_diffs_d3$conf.high <- e2_own3_data_d3$CI_high - e2_baseline_data_d3$CI_high # Approximate CI
+e2_diffs_d3$conf.low <- e2_own3_data_d3$CI_low - e2_baseline_data_d3$CI_low
+e2_diffs_d3$conf.high <- e2_own3_data_d3$CI_high - e2_baseline_data_d3$CI_high
 e2_diffs_d3$contrast <- "OwnD3 - Baseline"
 
 e2_prob_diffs_plot_d3 <- ggplot(e2_diffs_d3, aes(x = ev, y = predicted, color = condition, fill = condition)) +
   geom_hline(yintercept = 0, linetype = "dashed") +
   geom_vline(xintercept = 10, linetype = "dashed") +
-  geom_line(aes(linetype = condition), size = 1, color = "black") +
+  geom_line(aes(linetype = condition), linewidth = 1, color = "black") +
   scale_linetype_manual(values = c("solid", "dotted")) +
   scale_color_grey() +
   scale_fill_grey() +
@@ -406,9 +479,7 @@ e2_prob_diffs_plot_d3 <- ggplot(e2_diffs_d3, aes(x = ev, y = predicted, color = 
     strip.background = element_rect(fill = "transparent")
   )
 
-# Group probability plot (Baseline vs OwnD3)
-e2_emmeans_df_d3 <- as.data.frame(e2_emmeans_d3$emmeans)
-
+# Group probability plot across all four phases
 e2_group_plot_d3 <- ggplot(e2_emmeans_df_d3, aes(x = phase, y = prob, fill = condition)) +
   geom_hline(yintercept = 0.5, linetype = "dashed") +
   geom_col(width = 0.75, position = position_dodge(width = 0.75), color = "black", alpha = 0.8) +
@@ -438,11 +509,6 @@ e2_group_plot_d3 <- ggplot(e2_emmeans_df_d3, aes(x = phase, y = prob, fill = con
   )
 
 # Group difference plot (OwnD3 - Baseline)
-e2_contrasts_df_d3 <- as.data.frame(e2_emmeans_d3$contrasts) %>%
-  mutate(p_lab = cut(p.value, c(-Inf, 0.001, 0.01, 0.05, Inf), labels = c("***", "**", "*", "ns")))
-
-e2_contrasts_subset_d3 <- e2_contrasts_df_d3[grepl("OwnD3 - Baseline", e2_contrasts_df_d3$contrast), ]
-
 e2_group_diffs_plot_d3 <- ggplot(e2_contrasts_subset_d3, aes(x = condition, y = estimate, fill = condition)) +
   geom_hline(yintercept = 0, linetype = "dashed") +
   geom_col(width = 0.35, position = position_dodge(width = 0.35), color = "black", alpha = 0.8) +
@@ -450,7 +516,7 @@ e2_group_diffs_plot_d3 <- ggplot(e2_contrasts_subset_d3, aes(x = condition, y = 
     aes(ymin = asymp.LCL, ymax = asymp.UCL),
     width = 0.1, position = position_dodge(width = 0.35)
   ) +
-  geom_text( # Add significance labels
+  geom_text(
     aes(label = p_lab, y = ifelse(estimate > 0, (asymp.UCL + 0.05), (asymp.LCL - 0.1))),
     position = position_dodge(width = 0.35)
   ) +
@@ -480,28 +546,29 @@ e2_group_diffs_plot_d3 <- ggplot(e2_contrasts_subset_d3, aes(x = condition, y = 
     strip.background = element_rect(fill = "transparent")
   )
 
-# Create Figures ----------------------------------------------------------
-
-# Define layout for figures with subplots
-layout <- "
-AACCC
-AACCC
-BBDDD
-"
-
-# Figure 3: Experiment 1 (Lives frame) - Day 3 Comparison
-fig3 <- e1_prob_plot_d3 + e1_prob_diffs_plot_d3 + e1_group_plot_d3 + e1_group_diffs_plot_d3 +
-  plot_layout(design = layout) +
-  plot_annotation(tag_levels = list(c("a", "c", "b", "d")))
-
-# Figure 5: Experiment 2 (Money frame) - Day 3 Comparison
 fig5 <- e2_prob_plot_d3 + e2_prob_diffs_plot_d3 + e2_group_plot_d3 + e2_group_diffs_plot_d3 +
   plot_layout(design = layout) +
   plot_annotation(tag_levels = list(c("a", "c", "b", "d")))
 
-fig3
+ggsave(here("output/fig5.pdf"), fig5, scale = 1.5, width = 10, height = 7)
 fig5
+```
 
-# Save figures
-ggsave("output/fig3.pdf", fig3, scale = 1.5, width = 10, height = 7)
-ggsave("output/fig5.pdf", fig5, scale = 1.5, width = 10, height = 7)
+```{r save-summary-d3}
+#| include: false
+key_results_day3 <- bind_rows(
+  mutate(e1_contrasts_subset_d3, frame = "Lives", stage = "Follow-Up (Day 3)"),
+  mutate(e2_contrasts_subset_d3, frame = "Money", stage = "Follow-Up (Day 3)")
+) %>%
+  left_join(
+    select(all_contrast_pairs_d3, frame, domain, pair_p_lab = p_lab, pair_y = y),
+    by = c("frame", "domain")
+  ) %>%
+  select(
+    stage, frame, domain, condition, contrast,
+    estimate, SE, asymp.LCL, asymp.UCL, z.ratio, p.value, p_lab,
+    pair_p_lab, pair_y
+  )
+
+write_csv(key_results_day3, here("output/key_results_day3.csv"))
+```

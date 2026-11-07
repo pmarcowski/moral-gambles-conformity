@@ -1,11 +1,14 @@
 # Risk Norms Data Preparation
 #
-# This script loads raw data from two experiments, performs data cleaning,
-# applies exclusion criteria, and saves the processed datasets for analysis.
+# Loads raw trial-level exports from Experiment 1 (Lives) and Experiment 2 (Money),
+# cleans factor coding, applies the five-step exclusion cascade, and writes the
+# prepared datasets to data/experiment1.Rds and data/experiment2.Rds.
+#
+# Run from the repository root: Rscript R/prepare_data.R
 
-# Load packages
 library(tidyverse)
-library(haven)
+
+dir.create("data", showWarnings = FALSE)
 
 # Define factor levels
 TIME_LEVELS <- c("Dayone", "Followup")
@@ -14,7 +17,7 @@ CONDITION_LEVELS <- c("Risk Averse", "Risk Seeking")
 DOMAIN_LEVELS <- c("Gains", "Losses")
 FRAME_LEVELS <- c("Lives", "Money")
 
-# Process Experiment 1 data -----------------------------------------------
+# Process Experiment 1 data (Lives) ---------------------------------------
 
 # List of participants to exclude based on low-variance responses
 e1_low_variance_exclusions <- c(
@@ -95,7 +98,7 @@ e1_followup <- read_csv("data/raw/experiment1_day3.csv") %>%
 e1_combined <- bind_rows(e1_day_one, e1_followup) %>%
   mutate(frame = "Lives") %>%
   group_by(id) %>%
-  fill(gender, age, influence_score, .direction = "down") %>% # fill gender and age
+  fill(gender, age, influence_score, .direction = "down") %>%
   ungroup() %>%
   distinct()
 
@@ -135,12 +138,12 @@ incomplete_participants <- setdiff(
 )
 e1_filtered <- e1_filtered[!e1_filtered$id %in% incomplete_participants, ]
 
-# Process experiment 2 data -----------------------------------------------
+# Process Experiment 2 data (Money) ---------------------------------------
 
 # List of participants to exclude based on low-variance responses
 e2_low_variance_exclusions <- c("L-H-_rwnskks2p")
 
-# Load and prepare day one data for experiment 2
+# Load and prepare day one data for Experiment 2
 e2_day_one <- read_csv("data/raw/experiment2_day0.csv") %>%
   rename("id" = "uniqueCode", "influence_score" = "influenceScore") %>%
   mutate(
@@ -176,7 +179,7 @@ e2_day_one <- read_csv("data/raw/experiment2_day0.csv") %>%
     comprehensionCorrectPercentage, gamble_value_base
   )
 
-# Load and prepare follow-up data for experiment 2
+# Load and prepare follow-up data for Experiment 2
 e2_followup <- read_csv("data/raw/experiment2_day3.csv") %>%
   rename("id" = "uniqueCode") %>%
   left_join(unique(e2_day_one[, c("id", "domain", "condition")])) %>%
@@ -196,15 +199,15 @@ e2_followup <- read_csv("data/raw/experiment2_day3.csv") %>%
   select(id, time, domain, condition, phase, trial, ev, choice,
          comprehensionCorrectPercentage, gamble_value_base)
 
-# Combine day one and follow-up data for experiment 2
+# Combine day one and follow-up data for Experiment 2
 e2_combined <- bind_rows(e2_day_one, e2_followup) %>%
   mutate(frame = "Money") %>%
   group_by(id) %>%
-  fill(gender, age, influence_score, .direction = "down") %>% # fill gender and age
+  fill(gender, age, influence_score, .direction = "down") %>%
   ungroup() %>%
   distinct()
 
-# Apply exclusion criteria (experiment 2) --------------------------------
+# Apply exclusion criteria (Experiment 2) --------------------------------
 # 1. Exclude participants who completed only follow-up but not day one
 extra_followup_ids <- setdiff(
   unique(e2_combined$id[e2_combined$time == "Followup"]),
@@ -241,5 +244,5 @@ incomplete_participants <- setdiff(
 e2_filtered <- e2_filtered[!e2_filtered$id %in% incomplete_participants, ]
 
 # Save the final processed datasets
-saveRDS(e1_filtered, "data/prepared/experiment1.Rds")
-saveRDS(e2_filtered, "data/prepared/experiment2.Rds")
+saveRDS(e1_filtered, "data/experiment1.Rds")
+saveRDS(e2_filtered, "data/experiment2.Rds")

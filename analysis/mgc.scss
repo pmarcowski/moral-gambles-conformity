@@ -1,0 +1,41 @@
+/*-- scss:defaults --*/
+
+$primary: #2f6f9e;
+$link-color: #2f6f9e;
+$navbar-bg: #ffffff;
+$navbar-fg: #212529;
+$navbar-hl: #2f6f9e;
+$code-color: #212529;
+$code-block-bg: #f8f9fa;
+$callout-color-note: #2f6f9e;
+
+/*-- scss:rules --*/
+
+:root {
+  color-scheme: light;
+}
+
+.navbar {
+  border-bottom: 1px solid #dee2e6;
+}
+
+.navbar .navbar-brand {
+  font-weight: 600;
+}
+
+.subtitle, .quarto-title-meta {
+  color: #5c6169;
+}
+
+table td, table th {
+  vertical-align: top;
+}
+
+.studies td:first-child, .studies th:first-child {
+  white-space: nowrap;
+}
+
+.cell-output-display img {
+  max-width: 100%;
+  height: auto;
+}

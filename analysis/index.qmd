@@ -1,0 +1,143 @@
+---
+title: "Social Conformity in Moral and Monetary Gambles"
+subtitle: "People conform to social norms when gambling with lives or money"
+toc: false
+code-tools: false
+execute:
+  echo: false
+---
+
+```{r setup}
+#| include: false
+library(tidyverse)
+library(patchwork)
+library(ggsignif)
+library(here)
+
+here::i_am("analysis/index.qmd")
+
+summary_files <- here("output", c("key_results_day0.csv", "key_results_day3.csv"))
+if (!all(file.exists(summary_files))) {
+  stop(
+    "The overview reads the summary tables that day0.qmd and day3.qmd write; ",
+    "render those two first, or render the whole site with `quarto render analysis`."
+  )
+}
+
+e1 <- readRDS(here("data/experiment1.Rds"))
+e2 <- readRDS(here("data/experiment2.Rds"))
+n_e1 <- n_distinct(e1$id)
+n_e2 <- n_distinct(e2$id)
+n_total <- n_e1 + n_e2
+
+results <- bind_rows(
+  read_csv(summary_files[1], show_col_types = FALSE),
+  read_csv(summary_files[2], show_col_types = FALSE)
+) %>%
+  mutate(
+    domain = factor(domain, levels = c("Gains", "Losses")),
+    condition = factor(condition, levels = c("Risk Averse", "Risk Seeking"))
+  )
+
+plot_overview_panel <- function(df, panel_title, y_lab) {
+  pairs_df <- df %>%
+    distinct(domain, pair_p_lab, pair_y) %>%
+    mutate(x = 1, xend = 2)
+
+  ggplot(df, aes(x = condition, y = estimate, fill = condition)) +
+    geom_hline(yintercept = 0, linetype = "dashed") +
+    geom_col(width = 0.35, position = position_dodge(width = 0.35), color = "black", alpha = 0.8) +
+    geom_errorbar(
+      aes(ymin = asymp.LCL, ymax = asymp.UCL),
+      width = 0.1, position = position_dodge(width = 0.35)
+    ) +
+    geom_text(
+      aes(label = p_lab, y = ifelse(estimate > 0, (asymp.UCL + 0.05), (asymp.LCL - 0.08))),
+      position = position_dodge(width = 0.35)
+    ) +
+    ggsignif::geom_signif(
+      stat = "identity", data = pairs_df,
+      aes(x = x, xend = xend, y = pair_y, yend = pair_y, annotation = pair_p_lab),
+      comparisons = list("Risk Averse", "Risk Seeking"),
+      inherit.aes = FALSE
+    ) +
+    scale_fill_grey() +
+    coord_cartesian(ylim = c(-0.5, 0.5)) +
+    cowplot::theme_cowplot() +
+    facet_wrap(~domain) +
+    labs(
+      title = panel_title,
+      x = "Condition",
+      y = y_lab
+    ) +
+    theme(
+      legend.position = "none",
+      plot.title = element_text(hjust = 0.5),
+      panel.spacing = unit(1, "lines"),
+      strip.background = element_rect(fill = "transparent")
+    )
+}
+
+sections <- tribble(
+  ~Section, ~Scope,
+  "[Experiment 1: Moral Domain — Day 0](day0.html#experiment-1-moral-domain-lives)",
+  "Baseline risk preferences, immediate conformity, and norm asymmetry in moral choices",
+  "[Experiment 2: Monetary Domain — Day 0](day0.html#experiment-2-monetary-domain-money)",
+  "Baseline risk preferences, immediate conformity, and norm asymmetry in monetary choices",
+  "[Combined Analysis: Moral vs. Monetary](day0.html#combined-analysis-moral-vs.-monetary-domains)",
+  "Cross-domain comparison of gamble acceptance and relative social norm influence",
+  "[Experiment 1: Moral Domain — Day 3](day3.html#experiment-1-moral-domain-lives)",
+  "Three-day persistence of conformity and four-phase comparison in moral choices",
+  "[Experiment 2: Monetary Domain — Day 3](day3.html#experiment-2-monetary-domain-money)",
+  "Three-day persistence of conformity and four-phase comparison in monetary choices"
+)
+```
+
+Moral decisions are often assumed to follow an internal compass that resists social pressure, yet people routinely look to others when outcomes are uncertain. Across two longitudinal experiments (*N* = `r n_total` participants: *N* = `r n_e1` in Experiment 1, moral decisions involving animal lives; *N* = `r n_e2` in Experiment 2, monetary decisions), we adapted the Asian Disease Paradigm to test how observing risk-averse or risk-seeking group norms shapes personal risk preferences across gain and loss frames immediately after learning and after a three-day delay. The [Immediate Conformity](day0.qmd) and [Persistence](day3.qmd) notebooks report the full analyses and figures, accompanying Jiang, Marcowski, Ryazanov, & Winkielman (2023, *Scientific Reports*, [doi:10.1038/s41598-023-27462-1](https://doi.org/10.1038/s41598-023-27462-1)), with code and data in the [GitHub repository](https://github.com/pmarcowski/moral-gambles-conformity).
+
+## Summary
+
+- **People conform to social norms when gambling with lives or money.** After observing the choices of a risk-averse or risk-seeking group, participants shifted their own gamble acceptance toward the group's preference across both moral choices involving animal lives and monetary choices involving dollars.
+- **Conformity persists across a three-day delay.** When reassessed three days later without further norm exposure, participants maintained the risk preferences they had adopted on the first day, indicating that social norms had a lasting effect on personal valuation rather than producing only momentary compliance.
+- **Framing and domain shape which norms carry the most weight.** In the monetary domain, norms that ran counter to default framing tendencies were more influential: risk-seeking norms shifted choices more strongly under gain framing, whereas risk-averse norms shifted choices more strongly under loss framing. In the moral domain, risk-averse norms were likewise more influential than risk-seeking norms under loss framing, but both risk-averse and risk-seeking norms were equally effective under gain framing.
+
+```{r overview-figure}
+#| fig-width: 12
+#| fig-height: 9
+#| fig-cap: "Summary of immediate (Day 0) and persistent (Day 3) social conformity relative to baseline across moral (Experiment 1: Lives) and monetary (Experiment 2: Money) domains. Positive values indicate a shift toward risk-seeking choices relative to baseline; negative values indicate a shift toward risk-averse choices relative to baseline. Error bars show 95% confidence intervals."
+
+p_e1_d0 <- plot_overview_panel(
+  filter(results, frame == "Lives", stage == "Immediate (Day 0)"),
+  "Experiment 1 (Lives) — Immediate (Day 0)",
+  "Difference in Gambling\n(OwnD0 - Baseline)"
+)
+
+p_e1_d3 <- plot_overview_panel(
+  filter(results, frame == "Lives", stage == "Follow-Up (Day 3)"),
+  "Experiment 1 (Lives) — Persistence (Day 3)",
+  "Difference in Gambling\n(OwnD3 - Baseline)"
+)
+
+p_e2_d0 <- plot_overview_panel(
+  filter(results, frame == "Money", stage == "Immediate (Day 0)"),
+  "Experiment 2 (Money) — Immediate (Day 0)",
+  "Difference in Gambling\n(OwnD0 - Baseline)"
+)
+
+p_e2_d3 <- plot_overview_panel(
+  filter(results, frame == "Money", stage == "Follow-Up (Day 3)"),
+  "Experiment 2 (Money) — Persistence (Day 3)",
+  "Difference in Gambling\n(OwnD3 - Baseline)"
+)
+
+(p_e1_d0 + p_e1_d3) / (p_e2_d0 + p_e2_d3) +
+  plot_annotation(tag_levels = "a")
+```
+
+## Analysis Notebooks
+
+::: {.studies}
+```{r notebooks-table}
+knitr::kable(sections, align = "ll")
+```
+:::

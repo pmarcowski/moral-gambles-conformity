@@ -1,0 +1,924 @@
+---
+title: "Immediate Conformity (Day 0)"
+subtitle: "Baseline risk preferences and immediate conformity to social norms across moral and monetary domains"
+author: "Przemek Marcowski"
+---
+
+This notebook analyzes baseline risk preferences and immediate conformity to social norms across Experiment 1 (moral domain: animal lives) and Experiment 2 (monetary domain: dollars), as well as the pooled cross-domain comparison. On each trial, participants chose between a sure outcome (saving or losing 10 lives or dollars for sure) and a 50/50 gamble of varying expected value under gain or loss framing, before and after learning a risk-averse or risk-seeking group norm.
+
+| Section | Focus |
+|---|---|
+| Sample & Model Fitting | Sample composition and mixed-effects logistic regression models for Experiment 1, Experiment 2, and pooled data |
+| Experiment 1: Moral Domain (Lives) | Baseline risk preferences, immediate conformity, and norm asymmetry in moral choices |
+| Experiment 2: Monetary Domain (Money) | Baseline risk preferences, immediate conformity, and norm asymmetry in monetary choices |
+| Combined Analysis: Moral vs. Monetary Domains | Cross-domain comparison of gamble acceptance and relative norm influence |
+
+```{r setup}
+library(tidyverse)
+library(glmmTMB)
+library(emmeans)
+library(easystats)
+library(patchwork)
+library(ggsignif)
+library(here)
+
+here::i_am("analysis/day0.qmd")
+set.seed(42)
+dir.create(here("output"), showWarnings = FALSE)
+
+# Define factor levels for consistent ordering
+PHASE_LEVELS <- c("Baseline", "OwnD0")
+CONDITION_LEVELS <- c("Risk Averse", "Risk Seeking")
+DOMAIN_LEVELS <- c("Gains", "Losses")
+FRAME_LEVELS <- c("Lives", "Money")
+
+fmt_p <- function(p) {
+  ifelse(p < 0.001, "< .001", sub("^0", "", sprintf("%.3f", p)))
+}
+
+fmt_conformity_table <- function(phase_df, pair_df, phase_label = "OwnD0") {
+  bind_rows(
+    phase_df %>%
+      transmute(
+        domain = factor(domain, levels = DOMAIN_LEVELS),
+        ord = if_else(condition == "Risk Averse", 1L, 2L),
+        Contrast = paste0(condition, " (", phase_label, " \u2212 Baseline)"),
+        estimate, asymp.LCL, asymp.UCL, z.ratio, p.value
+      ),
+    pair_df %>%
+      transmute(
+        domain = factor(domain, levels = DOMAIN_LEVELS),
+        ord = 3L,
+        Contrast = "Norm asymmetry (|\u0394 Risk Averse| \u2212 |\u0394 Risk Seeking|)",
+        estimate, asymp.LCL, asymp.UCL, z.ratio, p.value
+      )
+  ) %>%
+    arrange(domain, ord) %>%
+    transmute(
+      Domain = as.character(domain),
+      Contrast = Contrast,
+      `ΔP [95% CI]` = sprintf("%.2f [%.2f, %.2f]", estimate, asymp.LCL, asymp.UCL),
+      z = sprintf("%.2f", z.ratio),
+      p = fmt_p(p.value)
+    ) %>%
+    knitr::kable(align = "llrrr")
+}
+```
+
+# Sample & Model Fitting
+
+Each experiment is analyzed across the baseline and immediate post-exposure assessment phases.
+
+```{r load-data}
+# Load Experiment 1 data (Lives frame)
+e1_data <- readRDS(here("data/experiment1.Rds")) %>%
+  filter(time == "Dayone", phase %in% PHASE_LEVELS) %>%
+  mutate(
+    condition = factor(condition, levels = CONDITION_LEVELS),
+    phase = factor(phase, levels = PHASE_LEVELS),
+    domain = factor(domain, levels = DOMAIN_LEVELS)
+  ) %>%
+  select(-age)
+
+# Load Experiment 2 data (Money frame)
+e2_data <- readRDS(here("data/experiment2.Rds")) %>%
+  filter(time == "Dayone", phase %in% PHASE_LEVELS) %>%
+  mutate(
+    condition = factor(condition, levels = CONDITION_LEVELS),
+    phase = factor(phase, levels = PHASE_LEVELS),
+    domain = factor(domain, levels = DOMAIN_LEVELS)
+  ) %>%
+  select(-age)
+
+# Combine both experiments for joint analysis
+combined_data <- bind_rows(e1_data, e2_data) %>%
+  mutate(frame = factor(frame, levels = FRAME_LEVELS))
+
+# Sample size by experiment, framing domain, and norm condition
+sample_size_by_frame <- combined_data %>%
+  group_by(frame, domain, condition) %>%
+  summarize(n = n_distinct(id), .groups = "drop")
+
+sample_size_by_frame %>%
+  pivot_wider(names_from = condition, values_from = n) %>%
+  mutate(
+    Experiment = if_else(frame == "Lives", "Experiment 1 (Lives)", "Experiment 2 (Money)"),
+    Domain = as.character(domain),
+    Total = `Risk Averse` + `Risk Seeking`
+  ) %>%
+  select(Experiment, Domain, `Risk Averse`, `Risk Seeking`, Total) %>%
+  knitr::kable(align = "llrrr")
+```
+
+We fit mixed-effects logistic regression models predicting binary gamble acceptance from expected value, assessment phase, norm condition, and framing domain (plus decision frame in the pooled model), with random intercepts for participants.
+
+```{r model-fitting}
+# Model formulas
+e1_formula <- formula(choice ~ ev * phase * condition * domain + (1 | id))
+e2_formula <- formula(choice ~ ev * phase * condition * domain + (1 | id))
+combined_formula <- formula(choice ~ ev * phase * condition * domain * frame + (1 | id))
+
+# Model control parameters
+model_control <- glmmTMBControl(
+  optCtrl = list(iter.max = 1e+3, eval.max = 1e+3),
+  parallel = min(4L, max(1L, parallel::detectCores() - 1L))
+)
+
+model_file_path <- here("output/models_day0.Rds")
+
+if (!file.exists(model_file_path)) {
+  e1_model <- glmmTMB(
+    e1_formula, data = e1_data,
+    family = binomial(link = "logit"),
+    control = model_control
+  )
+
+  e2_model <- glmmTMB(
+    e2_formula, data = e2_data,
+    family = binomial(link = "logit"),
+    control = model_control
+  )
+
+  combined_model <- glmmTMB(
+    combined_formula, data = combined_data,
+    family = binomial(link = "logit"),
+    control = model_control
+  )
+
+  models <- list(e1_model, e2_model, combined_model)
+  saveRDS(models, file = model_file_path)
+} else {
+  models <- readRDS(file = model_file_path)
+  e1_model <- models[[1]]
+  e2_model <- models[[2]]
+  combined_model <- models[[3]]
+}
+```
+
+# Experiment 1: Moral Domain (Lives)
+
+In Experiment 1, we first evaluate sensitivity to expected value within each framing domain, overall baseline gambling against chance, and framing differences at baseline and immediate re-test.
+
+```{r e1-baseline-and-domains}
+# Standardized slopes of expected value by domain
+e1_domain_slopes <- as.data.frame(standardize(estimate_slopes(e1_model, trend = "ev", by = "domain")))
+
+# Overall gambling behavior at baseline against 0.5
+e1_baseline_gambling <- broom::tidy(binom.test(
+  sum(e1_data[e1_data$phase == "Baseline", "choice"]),
+  nrow(e1_data[e1_data$phase == "Baseline", "choice"])
+))
+
+# Pairwise comparisons between domains (Losses vs. Gains) for each phase
+e1_domain_comparisons <- withr::with_seed(42, emmeans(
+  e1_model, revpairwise ~ domain | phase,
+  regrid = "response", infer = TRUE, adjust = "mvt"
+))
+e1_domain_comp_df <- as.data.frame(e1_domain_comparisons$contrasts)
+```
+
+Participants tracked expected value in both domains, becoming more likely to gamble as expected lives saved increased in Gains (*b* = 0.10, 95% CI [0.09, 0.12], *z* = 13.20, *p* < .001) and less likely to gamble as expected lives lost increased in Losses (*b* = -0.16, 95% CI [-0.17, -0.14], *z* = -23.99, *p* < .001). Overall baseline gamble acceptance was below chance at 42.6% (95% CI [41.4%, 43.8%], *p* < .001), with a pronounced framing effect: participants gambled substantially more in Losses than in Gains both at baseline (Δ*P* = 0.32, 95% CI [0.16, 0.48], *z* = 3.96, *p* < .001) and at immediate re-test (Δ*P* = 0.24, 95% CI [0.09, 0.38], *z* = 3.25, *p* = .001).
+
+Next, we test differences between the risk-averse and risk-seeking conditions within each phase and domain, the within-condition conformity shifts from baseline to immediate re-test, and the interaction contrast comparing the magnitude of risk-averse versus risk-seeking social influence.
+
+```{r e1-conformity-contrasts}
+# Pairwise comparisons between conditions for each phase and domain
+e1_condition_comparisons <- as.data.frame(
+  withr::with_seed(42, emmeans(
+    e1_model, pairwise ~ condition | phase | domain,
+    regrid = "response", infer = TRUE, adjust = "mvt",
+    data = e1_data
+  ))$contrasts
+)
+
+# Marginal means and phase contrasts (OwnD0 - Baseline) by condition and domain
+e1_emmeans <- withr::with_seed(42, emmeans(
+  e1_model, revpairwise ~ phase | condition | domain,
+  regrid = "response", infer = TRUE, adjust = "mvt"
+))
+e1_emmeans_df <- as.data.frame(e1_emmeans$emmeans)
+e1_contrasts_df <- as.data.frame(e1_emmeans$contrasts) %>%
+  mutate(p_lab = cut(p.value, c(-Inf, 0.001, 0.01, 0.05, Inf), labels = c("***", "**", "*", "ns")))
+e1_contrasts_subset <- e1_contrasts_df[grepl("OwnD0 - Baseline", e1_contrasts_df$contrast), ]
+
+# Predicted probabilities across the EV continuum
+e1_predicted_probs <- estimate_means(
+  e1_model,
+  by = c("phase", "condition", "domain", "ev"),
+  length = 100
+)
+
+# Contrasts of contrasts: Risk Averse shift vs. Risk Seeking shift
+e1_conds_emmeans <- emmeans(
+  e1_model, ~ condition * phase | domain,
+  regrid = "response",
+  at = list(phase = c("OwnD0", "Baseline"))
+)
+
+e1_contrasts <- contrast(
+  e1_conds_emmeans,
+  list(
+    `Baseline Risk Averse - OwnD0 Risk Averse` = c(-1, 0, 1, 0),
+    `OwnD0 Risk Seeking - Baseline Risk Seeking` = c(0, 1, 0, -1)
+  )
+)
+
+e1_contrast_pairs <- as.data.frame(pairs(e1_contrasts, infer = TRUE))
+e1_contrast_pairs$frame <- "Lives"
+e1_contrast_pairs$p_sig <- with(e1_contrast_pairs, ifelse(p.value < 0.05, "*", ""))
+e1_contrast_pairs$p_lab <- with(
+  e1_contrast_pairs,
+  cut(p.value, c(-Inf, 0.001, 0.01, 0.05, Inf), labels = c("***", "**", "*", "ns"))
+)
+e1_contrast_pairs$x <- 1
+e1_contrast_pairs$xend <- 2
+e1_contrast_pairs$y <- 0.4
+
+fmt_conformity_table(e1_contrasts_subset, e1_contrast_pairs, "OwnD0")
+```
+
+Before norm exposure, baseline gamble acceptance did not differ between the Risk Averse and Risk Seeking groups in either Gains (Δ*P* = 0.05, 95% CI [-0.10, 0.20], *z* = 0.63, *p* = .532) or Losses (Δ*P* = -0.06, 95% CI [-0.34, 0.22], *z* = -0.41, *p* = .680). After observing the group norm, the two conditions diverged sharply in both Gains (Δ*P* = -0.32, 95% CI [-0.51, -0.13], *z* = -3.28, *p* = .001) and Losses (Δ*P* = -0.51, 95% CI [-0.73, -0.30], *z* = -4.74, *p* < .001). Both risk-averse and risk-seeking norms shifted moral choices in the norm-consistent direction across both frames. In Losses, risk-averse norms exerted a stronger pull than risk-seeking norms, whereas in Gains the two norms were comparably effective.
+
+```{r fig2}
+#| fig-width: 15
+#| fig-height: 10.5
+#| fig-cap: "Conformity effects in the moral domain (Experiment 1, Lives) on Day 0. (a) Gamble acceptance probability as a function of expected value. (b) Marginal probability of gambling by phase and condition. (c) Difference in gambling probability (OwnD0 minus Baseline) across expected value. (d) Marginal difference in gambling probability (OwnD0 minus Baseline) by condition and domain."
+
+# Probability by EV plot
+e1_prob_data <- e1_predicted_probs
+
+e1_prob_plot <- ggplot(e1_prob_data, aes(x = ev, y = Probability, color = condition, fill = condition)) +
+  geom_hline(yintercept = 0.5, linetype = "dashed") +
+  geom_vline(xintercept = 10, linetype = "dashed") +
+  geom_line(linewidth = 1, linetype = "solid") +
+  geom_ribbon(aes(ymin = CI_low, ymax = CI_high), alpha = 0.6, color = NA) +
+  scale_color_grey() +
+  scale_fill_grey() +
+  coord_cartesian(ylim = c(0, 1)) +
+  cowplot::theme_cowplot() +
+  theme(legend.position = "bottom") +
+  labs(
+    title = "Gamble Acceptance by Expected Value",
+    x = "Gamble Expected Value (Lives)",
+    y = "Probability of Choosing the Gamble Option",
+    color = "Condition",
+    fill = "Condition",
+    linetype = "Condition"
+  ) +
+  facet_grid(phase ~ domain, scales = "free_x") +
+  theme(
+    legend.position = "bottom",
+    legend.justification = c(0.5, 0.5),
+    panel.spacing = unit(2, "lines"),
+    plot.title = element_text(hjust = 0.5),
+    panel.border = element_rect(color = "black"),
+    strip.background = element_rect(fill = "transparent")
+  )
+
+# Difference plot by EV
+e1_baseline_data <- e1_predicted_probs[e1_predicted_probs$phase == "Baseline", ]
+e1_own0_data <- e1_predicted_probs[e1_predicted_probs$phase == "OwnD0", ]
+
+e1_diffs <- e1_own0_data
+e1_diffs$predicted <- e1_own0_data$Probability - e1_baseline_data$Probability
+e1_diffs$conf.low <- e1_own0_data$CI_low - e1_baseline_data$CI_low
+e1_diffs$conf.high <- e1_own0_data$CI_high - e1_baseline_data$CI_high
+e1_diffs$contrast <- "OwnD0 - Baseline"
+
+e1_prob_diffs_plot <- ggplot(e1_diffs, aes(x = ev, y = predicted, color = condition, fill = condition)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_vline(xintercept = 10, linetype = "dashed") +
+  geom_line(aes(linetype = condition), linewidth = 1, color = "black") +
+  scale_linetype_manual(values = c("solid", "dotted")) +
+  scale_color_grey() +
+  scale_fill_grey() +
+  coord_cartesian(ylim = c(-0.5, 0.5)) +
+  cowplot::theme_cowplot() +
+  theme(legend.position = "bottom") +
+  labs(
+    title = "Influence by Expected Value",
+    x = "Gamble Expected Value (Lives)",
+    y = "Difference in Probabilities of Gambling\n(OwnD0 - Baseline)",
+    color = "Condition",
+    fill = "Condition",
+    linetype = "Condition"
+  ) +
+  facet_grid(contrast ~ domain) +
+  theme(
+    legend.position = "bottom",
+    legend.justification = c(0.5, 0.5),
+    panel.spacing = unit(2, "lines"),
+    plot.title = element_text(hjust = 0.5),
+    panel.border = element_rect(color = "black"),
+    strip.background = element_rect(fill = "transparent")
+  )
+
+# Group probability plot
+e1_group_plot <- ggplot(e1_emmeans_df, aes(x = phase, y = prob, fill = condition)) +
+  geom_hline(yintercept = 0.5, linetype = "dashed") +
+  geom_col(width = 0.75, position = position_dodge(width = 0.75), color = "black", alpha = 0.8) +
+  geom_errorbar(
+    aes(ymin = asymp.LCL, ymax = asymp.UCL),
+    width = 0.1, position = position_dodge(width = 0.75)
+  ) +
+  scale_fill_grey() +
+  coord_cartesian(ylim = c(0, 1)) +
+  cowplot::theme_cowplot() +
+  theme(legend.position = "bottom") +
+  labs(
+    title = "Gamble Acceptance by Phase",
+    x = "Phase",
+    y = "Probability of Choosing the Gamble Option",
+    fill = "Condition"
+  ) +
+  facet_wrap(~domain) +
+  theme(
+    legend.position = "bottom",
+    legend.justification = c(0.5, 0.5),
+    panel.spacing = unit(1, "lines"),
+    plot.title = element_text(hjust = 0.5),
+    strip.background = element_rect(fill = "transparent")
+  )
+
+# Group difference plot
+e1_group_diffs_plot <- ggplot(e1_contrasts_subset, aes(x = condition, y = estimate, fill = condition)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_col(width = 0.35, position = position_dodge(width = 0.35), color = "black", alpha = 0.8) +
+  geom_errorbar(
+    aes(ymin = asymp.LCL, ymax = asymp.UCL),
+    width = 0.1, position = position_dodge(width = 0.35)
+  ) +
+  geom_text(
+    aes(label = p_lab, y = ifelse(estimate > 0, (asymp.UCL + 0.05), (asymp.LCL - 0.1))),
+    position = position_dodge(width = 0.35)
+  ) +
+  scale_fill_grey() +
+  coord_cartesian(ylim = c(-0.5, 0.5)) +
+  cowplot::theme_cowplot() +
+  ggsignif::geom_signif(
+    stat = "identity", data = e1_contrast_pairs,
+    aes(x = x, xend = xend, y = y, yend = y, annotation = p_lab),
+    comparisons = list("Risk Averse", "Risk Seeking"),
+    inherit.aes = FALSE
+  ) +
+  labs(
+    title = "Influence by Condition",
+    subtitle = "Positive values indicate more risky choices compared to baseline\nNegative values indicate more risk averse choices compared to baseline",
+    x = "Condition",
+    y = "Difference in Probabilities of Gambling\n(OwnD0 - Baseline)",
+    fill = "Difference"
+  ) +
+  facet_wrap(~domain) +
+  theme(
+    legend.position = "none",
+    legend.justification = 0.5,
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5),
+    panel.spacing = unit(1, "lines"),
+    strip.background = element_rect(fill = "transparent")
+  )
+
+layout <- "
+AACCC
+AACCC
+BBDDD
+"
+
+fig2 <- e1_prob_plot + e1_prob_diffs_plot + e1_group_plot + e1_group_diffs_plot +
+  plot_layout(design = layout) +
+  plot_annotation(tag_levels = list(c("a", "c", "b", "d")))
+
+ggsave(here("output/fig2.pdf"), fig2, scale = 1.5, width = 10, height = 7)
+fig2
+```
+
+# Experiment 2: Monetary Domain (Money)
+
+In Experiment 2, we evaluate sensitivity to expected value by framing domain, overall baseline gambling against chance, and framing contrasts at baseline and immediate re-test.
+
+```{r e2-baseline-and-domains}
+# Standardized slopes of expected value by domain
+e2_domain_slopes <- as.data.frame(standardize(estimate_slopes(e2_model, trend = "ev", by = "domain")))
+
+# Overall gambling behavior at baseline against 0.5
+e2_baseline_gambling <- broom::tidy(binom.test(
+  sum(e2_data[e2_data$phase == "Baseline", "choice"]),
+  nrow(e2_data[e2_data$phase == "Baseline", "choice"])
+))
+
+# Pairwise comparisons between domains (Losses vs. Gains) for each phase
+e2_domain_comparisons <- withr::with_seed(42, emmeans(
+  e2_model, revpairwise ~ domain | phase,
+  regrid = "response", infer = TRUE, adjust = "mvt"
+))
+e2_domain_comp_df <- as.data.frame(e2_domain_comparisons$contrasts)
+```
+
+Participants in the monetary domain likewise tracked expected value in both Gains (*b* = 0.15, 95% CI [0.14, 0.16], *z* = 30.70, *p* < .001) and Losses (*b* = -0.10, 95% CI [-0.11, -0.09], *z* = -24.81, *p* < .001). Overall baseline gambling did not differ from chance at 49.5% (95% CI [48.2%, 50.7%], *p* = .374), but showed the classic framing asymmetry: gamble acceptance was significantly higher in Losses than in Gains at baseline (Δ*P* = 0.30, 95% CI [0.17, 0.42], *z* = 4.62, *p* < .001), a difference that narrowed after norm exposure (Δ*P* = 0.07, 95% CI [-0.05, 0.19], *z* = 1.12, *p* = .261).
+
+We then test differences between the risk-averse and risk-seeking conditions, within-condition conformity shifts from baseline to immediate re-test, and the interaction contrast comparing risk-averse and risk-seeking norm influence in monetary decisions.
+
+```{r e2-conformity-contrasts}
+# Pairwise comparisons between conditions for each phase and domain
+e2_condition_comparisons <- as.data.frame(
+  withr::with_seed(42, emmeans(
+    e2_model, pairwise ~ condition | phase | domain,
+    regrid = "response", infer = TRUE, adjust = "mvt"
+  ))$contrasts
+)
+
+# Marginal means and phase contrasts (OwnD0 - Baseline) by condition and domain
+e2_emmeans <- withr::with_seed(42, emmeans(
+  e2_model, revpairwise ~ phase | condition | domain,
+  regrid = "response", infer = TRUE, adjust = "mvt"
+))
+e2_emmeans_df <- as.data.frame(e2_emmeans$emmeans)
+e2_contrasts_df <- as.data.frame(e2_emmeans$contrasts) %>%
+  mutate(p_lab = cut(p.value, c(-Inf, 0.001, 0.01, 0.05, Inf), labels = c("***", "**", "*", "ns")))
+e2_contrasts_subset <- e2_contrasts_df[grepl("OwnD0 - Baseline", e2_contrasts_df$contrast), ]
+
+# Predicted probabilities across the EV continuum
+e2_predicted_probs <- estimate_means(
+  e2_model,
+  by = c("phase", "condition", "domain", "ev"),
+  length = 100
+)
+
+# Contrasts of contrasts: Risk Averse shift vs. Risk Seeking shift
+e2_conds_emmeans <- emmeans(
+  e2_model, ~ condition * phase | domain,
+  regrid = "response",
+  at = list(phase = c("OwnD0", "Baseline"))
+)
+
+e2_contrasts <- contrast(
+  e2_conds_emmeans,
+  list(
+    `Baseline Risk Averse - OwnD0 Risk Averse` = c(-1, 0, 1, 0),
+    `OwnD0 Risk Seeking - Baseline Risk Seeking` = c(0, 1, 0, -1)
+  )
+)
+
+e2_contrast_pairs <- as.data.frame(pairs(e2_contrasts, infer = TRUE))
+e2_contrast_pairs$frame <- "Money"
+e2_contrast_pairs$p_sig <- with(e2_contrast_pairs, ifelse(p.value < 0.05, "*", ""))
+e2_contrast_pairs$p_lab <- with(
+  e2_contrast_pairs,
+  cut(p.value, c(-Inf, 0.001, 0.01, 0.05, Inf), labels = c("***", "**", "*", "ns"))
+)
+e2_contrast_pairs$x <- 1
+e2_contrast_pairs$xend <- 2
+e2_contrast_pairs$y <- 0.475
+
+# Combine contrast pairs across both experiments
+all_contrast_pairs <- rbind(e1_contrast_pairs, e2_contrast_pairs)
+
+fmt_conformity_table(e2_contrasts_subset, e2_contrast_pairs, "OwnD0")
+```
+
+At baseline, gamble acceptance did not differ between conditions in either Gains (Δ*P* = -0.10, 95% CI [-0.27, 0.06], *z* = -1.20, *p* = .229) or Losses (Δ*P* = -0.07, 95% CI [-0.26, 0.12], *z* = -0.73, *p* = .468), whereas after norm exposure the two conditions differed strongly in both Gains (Δ*P* = -0.40, 95% CI [-0.55, -0.24], *z* = -4.97, *p* < .001) and Losses (Δ*P* = -0.34, 95% CI [-0.52, -0.16], *z* = -3.63, *p* < .001). Conformity in the monetary domain was sharpest when the norm opposed default framing tendencies: risk-seeking norms produced a large shift in Gains while risk-averse norms produced only a marginal shift, whereas in Losses risk-averse norms produced a large shift while risk-seeking norms did not move choices from baseline.
+
+```{r fig4}
+#| fig-width: 15
+#| fig-height: 10.5
+#| fig-cap: "Conformity effects in the monetary domain (Experiment 2, Money) on Day 0. (a) Gamble acceptance probability as a function of expected value. (b) Marginal probability of gambling by phase and condition. (c) Difference in gambling probability (OwnD0 minus Baseline) across expected value. (d) Marginal difference in gambling probability (OwnD0 minus Baseline) by condition and domain."
+
+# Probability by EV plot
+e2_prob_data <- e2_predicted_probs
+
+e2_prob_plot <- ggplot(e2_prob_data, aes(x = ev, y = Probability, color = condition, fill = condition)) +
+  geom_hline(yintercept = 0.5, linetype = "dashed") +
+  geom_vline(xintercept = 10, linetype = "dashed") +
+  geom_line(linewidth = 1, linetype = "solid") +
+  geom_ribbon(aes(ymin = CI_low, ymax = CI_high), alpha = 0.6, color = NA) +
+  scale_color_grey() +
+  scale_fill_grey() +
+  coord_cartesian(ylim = c(0, 1)) +
+  cowplot::theme_cowplot() +
+  theme(legend.position = "bottom") +
+  labs(
+    title = "Gamble Acceptance by Expected Value",
+    x = "Gamble Expected Value (Money)",
+    y = "Probability of Choosing the Gamble Option",
+    color = "Condition",
+    fill = "Condition",
+    linetype = "Condition"
+  ) +
+  facet_grid(phase ~ domain, scales = "free_x") +
+  theme(
+    legend.position = "bottom",
+    legend.justification = c(0.5, 0.5),
+    panel.spacing = unit(2, "lines"),
+    plot.title = element_text(hjust = 0.5),
+    panel.border = element_rect(color = "black"),
+    strip.background = element_rect(fill = "transparent")
+  )
+
+# Difference plot by EV
+e2_baseline_data <- e2_predicted_probs[e2_predicted_probs$phase == "Baseline", ]
+e2_own0_data <- e2_predicted_probs[e2_predicted_probs$phase == "OwnD0", ]
+
+e2_diffs <- e2_own0_data
+e2_diffs$predicted <- e2_own0_data$Probability - e2_baseline_data$Probability
+e2_diffs$conf.low <- e2_own0_data$CI_low - e2_baseline_data$CI_low
+e2_diffs$conf.high <- e2_own0_data$CI_high - e2_baseline_data$CI_high
+e2_diffs$contrast <- "OwnD0 - Baseline"
+
+e2_prob_diffs_plot <- ggplot(e2_diffs, aes(x = ev, y = predicted, color = condition, fill = condition)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_vline(xintercept = 10, linetype = "dashed") +
+  geom_line(aes(linetype = condition), linewidth = 1, color = "black") +
+  scale_linetype_manual(values = c("solid", "dotted")) +
+  scale_color_grey() +
+  scale_fill_grey() +
+  coord_cartesian(ylim = c(-0.5, 0.5)) +
+  cowplot::theme_cowplot() +
+  theme(legend.position = "bottom") +
+  labs(
+    title = "Influence by Expected Value",
+    x = "Gamble Expected Value (Money)",
+    y = "Difference in Probabilities of Gambling\n(OwnD0 - Baseline)",
+    color = "Condition",
+    fill = "Condition",
+    linetype = "Condition"
+  ) +
+  facet_grid(fct_recode(contrast, `OwnD0 - Baseline` = "OwnD0 - Baseline") ~ domain) +
+  theme(
+    legend.position = "bottom",
+    legend.justification = c(0.5, 0.5),
+    panel.spacing = unit(2, "lines"),
+    plot.title = element_text(hjust = 0.5),
+    panel.border = element_rect(color = "black"),
+    strip.background = element_rect(fill = "transparent")
+  )
+
+# Group probability plot
+e2_group_plot <- ggplot(e2_emmeans_df, aes(x = phase, y = prob, fill = condition)) +
+  geom_hline(yintercept = 0.5, linetype = "dashed") +
+  geom_col(width = 0.75, position = position_dodge(width = 0.75), color = "black", alpha = 0.8) +
+  geom_errorbar(
+    aes(ymin = asymp.LCL, ymax = asymp.UCL),
+    width = 0.1, position = position_dodge(width = 0.75)
+  ) +
+  scale_fill_grey() +
+  coord_cartesian(ylim = c(0, 1)) +
+  cowplot::theme_cowplot() +
+  theme(legend.position = "bottom") +
+  labs(
+    title = "Gamble Acceptance by Phase",
+    x = "Phase",
+    y = "Probability of Choosing the Gamble Option",
+    fill = "Condition"
+  ) +
+  facet_wrap(~domain) +
+  theme(
+    legend.position = "bottom",
+    legend.justification = c(0.5, 0.5),
+    panel.spacing = unit(1, "lines"),
+    plot.title = element_text(hjust = 0.5),
+    strip.background = element_rect(fill = "transparent")
+  )
+
+# Group difference plot
+e2_group_diffs_plot <- ggplot(e2_contrasts_subset, aes(x = condition, y = estimate, fill = condition)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_col(width = 0.35, position = position_dodge(width = 0.35), color = "black", alpha = 0.8) +
+  geom_errorbar(
+    aes(ymin = asymp.LCL, ymax = asymp.UCL),
+    width = 0.1, position = position_dodge(width = 0.35)
+  ) +
+  geom_text(
+    aes(label = p_lab, y = ifelse(estimate > 0, (asymp.UCL + 0.05), (asymp.LCL - 0.1))),
+    position = position_dodge(width = 0.35)
+  ) +
+  scale_fill_grey() +
+  coord_cartesian(ylim = c(-0.5, 0.5)) +
+  cowplot::theme_cowplot() +
+  ggsignif::geom_signif(
+    stat = "identity", data = all_contrast_pairs[all_contrast_pairs$frame == "Money", ],
+    aes(x = x, xend = xend, y = y, yend = y, annotation = p_lab),
+    comparisons = list("Risk Averse", "Risk Seeking"),
+    inherit.aes = FALSE
+  ) +
+  labs(
+    title = "Influence by Condition",
+    subtitle = "Positive values indicate more risky choices compared to baseline\nNegative values indicate more risk averse choices compared to baseline",
+    x = "Condition",
+    y = "Difference in Probabilities of Gambling\n(OwnD0 - Baseline)",
+    fill = "Difference"
+  ) +
+  facet_grid(~domain) +
+  theme(
+    legend.position = "none",
+    legend.justification = 0.5,
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5),
+    panel.spacing = unit(1, "lines"),
+    strip.background = element_rect(fill = "transparent")
+  )
+
+fig4 <- e2_prob_plot + e2_prob_diffs_plot + e2_group_plot + e2_group_diffs_plot +
+  plot_layout(design = layout) +
+  plot_annotation(tag_levels = list(c("a", "c", "b", "d")))
+
+ggsave(here("output/fig4.pdf"), fig4, scale = 1.5, width = 10, height = 7)
+fig4
+```
+
+# Combined Analysis: Moral vs. Monetary Domains
+
+Pooling Experiment 1 and Experiment 2, we compare post-exposure gamble acceptance and the magnitude of norm influence directly between moral and monetary frames.
+
+```{r combined-contrasts}
+# Standardized slopes of expected value by domain in the pooled model
+combined_slopes <- as.data.frame(standardize(estimate_slopes(combined_model, trend = "ev", by = "domain")))
+
+# Marginal means and Money - Lives contrasts at OwnD0
+combined_emmeans <- withr::with_seed(42, emmeans(
+  combined_model, revpairwise ~ frame | phase | condition | domain,
+  regrid = "response", infer = TRUE, adjust = "mvt",
+  at = list(phase = "OwnD0")
+))
+combined_emmeans_df <- as.data.frame(combined_emmeans$emmeans)
+combined_contrasts_df <- as.data.frame(combined_emmeans$contrasts) %>%
+  mutate(p_lab = cut(p.value, c(-Inf, 0.001, 0.01, 0.05, Inf), labels = c("***", "**", "*", "ns")))
+
+# Frame x phase x condition interactions within each domain
+combined_conds_emmeans <- emmeans(
+  combined_model, ~ frame * phase * condition | domain,
+  regrid = "response",
+  at = list(phase = c("OwnD0", "Baseline"))
+)
+
+combined_contrasts <- contrast(
+  combined_conds_emmeans,
+  list(
+    `Baseline Risk Averse [Lives] - OwnD0 Risk Averse [Lives]` = c(-1, 0, 1, 0, 0, 0, 0, 0),
+    `Baseline Risk Averse [Money] - OwnD0 Risk Averse [Money]` = c(0, -1, 0, 1, 0, 0, 0, 0),
+    `OwnD0 Risk Seeking [Lives] - Baseline Risk Seeking [Lives]` = c(0, 0, 0, 0, 1, 0, -1, 0),
+    `OwnD0 Risk Seeking [Money] - Baseline Risk Seeking [Money]` = c(0, 0, 0, 0, 0, 1, 0, -1)
+  )
+)
+
+# Frame differences (Money - Lives) by condition
+frame_by_condition_contrast <- contrast(
+  combined_contrasts,
+  list(
+    `Money - Lives [Risk Averse]` = c(-1, 1, 0, 0),
+    `Money - Lives [Risk Seeking]` = c(0, 0, -1, 1)
+  ),
+  infer = TRUE
+)
+
+frame_condition_pairs <- as.data.frame(frame_by_condition_contrast)
+frame_condition_pairs$condition <- with(
+  frame_condition_pairs,
+  str_remove_all(str_extract(contrast, "\\[.+\\]"), "\\[|\\]")
+)
+frame_condition_pairs$p_sig <- with(
+  frame_condition_pairs,
+  ifelse(p.value < 0.05, "*", "")
+)
+frame_condition_pairs$p_lab <- with(
+  frame_condition_pairs,
+  cut(p.value, c(-Inf, 0.001, 0.01, 0.05, Inf), labels = c("***", "**", "*", "ns"))
+)
+
+# Condition asymmetry differences (Risk Averse - Risk Seeking) by frame
+condition_by_frame_contrast <- contrast(
+  combined_contrasts,
+  list(
+    `Risk Averse [Lives] - Risk Seeking [Lives]` = c(1, 0, -1, 0),
+    `Risk Averse [Money] - Risk Seeking [Money]` = c(0, 1, 0, -1)
+  ),
+  infer = TRUE
+)
+
+condition_frame_pairs <- pairs(condition_by_frame_contrast, infer = TRUE)
+condition_frame_pairs_df <- as.data.frame(condition_frame_pairs)
+condition_frame_pairs_df$p_sig <- with(
+  condition_frame_pairs_df,
+  ifelse(p.value < 0.05, "*", "")
+)
+condition_frame_pairs_df$p_lab <- with(
+  condition_frame_pairs_df,
+  cut(p.value, c(-Inf, 0.001, 0.01, 0.05, Inf), labels = c("***", "**", "*", "ns"))
+)
+condition_frame_pairs_df$x <- 1
+condition_frame_pairs_df$xend <- 2
+condition_frame_pairs_df$y <- c(-0.4, 0.4)
+
+# Domain by frame contrast at baseline
+domain_frame_contrast <- emmeans(
+  combined_model, ~ domain * frame,
+  regrid = "response",
+  at = list(phase = c("Baseline"))
+)
+
+domain_frame_contrast_pairs <- contrast(
+  domain_frame_contrast,
+  list(
+    `Gains - Losses [Lives]` = c(1, -1, 0, 0),
+    `Gains - Losses [Money]` = c(0, 0, 1, -1)
+  ),
+  infer = TRUE
+)
+
+domain_frame_pairs <- as.data.frame(pairs(domain_frame_contrast_pairs, infer = TRUE))
+
+bind_rows(
+  frame_condition_pairs %>%
+    transmute(
+      domain = factor(domain, levels = DOMAIN_LEVELS),
+      ord = if_else(condition == "Risk Averse", 1L, 2L),
+      Contrast = paste0(condition, " shift (Money \u2212 Lives)"),
+      estimate, asymp.LCL, asymp.UCL, z.ratio, p.value
+    ),
+  condition_frame_pairs_df %>%
+    transmute(
+      domain = factor(domain, levels = DOMAIN_LEVELS),
+      ord = 3L,
+      Contrast = "Norm asymmetry (Lives \u2212 Money)",
+      estimate, asymp.LCL, asymp.UCL, z.ratio, p.value
+    )
+) %>%
+  arrange(domain, ord) %>%
+  transmute(
+    Domain = as.character(domain),
+    Contrast = Contrast,
+    `ΔP [95% CI]` = sprintf("%.2f [%.2f, %.2f]", estimate, asymp.LCL, asymp.UCL),
+    z = sprintf("%.2f", z.ratio),
+    p = fmt_p(p.value)
+  ) %>%
+  knitr::kable(align = "llrrr")
+```
+
+Across the pooled sample, expected value strongly predicted choice in both Gains (*b* = 0.13, 95% CI [0.12, 0.14], *z* = 27.37, *p* < .001) and Losses (*b* = -0.13, 95% CI [-0.14, -0.12], *z* = -33.19, *p* < .001), and the magnitude of the baseline gain-loss framing effect did not differ significantly between moral and monetary frames (Δ*P* = 0.14, 95% CI [-0.06, 0.34], *z* = 1.35, *p* = .178). At immediate re-test, overall gamble acceptance was higher for money than for animal lives under risk-averse norms in both Gains (Δ*P* = 0.20, 95% CI [0.10, 0.29], *z* = 3.89, *p* < .001) and Losses (Δ*P* = 0.26, 95% CI [0.08, 0.45], *z* = 2.77, *p* = .006), whereas post-exposure gamble acceptance under risk-seeking norms did not differ significantly between frames in Gains (Δ*P* = 0.22, 95% CI [-0.02, 0.45], *z* = 1.79, *p* = .073) or Losses (Δ*P* = 0.14, 95% CI [-0.08, 0.36], *z* = 1.22, *p* = .224). Comparing conformity shifts directly across frames shows that risk-averse norms exerted stronger influence in moral than in monetary Gains, whereas risk-seeking norms exerted stronger influence in moral than in monetary Losses.
+
+```{r fig6}
+#| fig-width: 15
+#| fig-height: 10.5
+#| fig-cap: "Cross-domain comparisons between moral (Lives) and monetary (Money) decisions on Day 0. (a) Gamble acceptance probability at OwnD0 by condition, domain, and frame. (b) Difference in gambling probability at OwnD0 (Money minus Lives). (c) Relative difference in norm influence between conditions (Risk Averse minus Risk Seeking) across frames. (d) Relative difference in norm influence between frames (Money minus Lives)."
+
+# Group probability plot
+combined_group_plot <- ggplot(combined_emmeans_df, aes(x = condition, y = prob, fill = frame)) +
+  geom_hline(yintercept = 0.5, linetype = "dashed") +
+  geom_col(width = 0.75, position = position_dodge(width = 0.75), color = "black", alpha = 0.8) +
+  geom_errorbar(
+    aes(ymin = asymp.LCL, ymax = asymp.UCL),
+    width = 0.1, position = position_dodge(width = 0.75)
+  ) +
+  scale_fill_manual(values = c("black", "white")) +
+  coord_cartesian(ylim = c(0, 1)) +
+  cowplot::theme_cowplot() +
+  labs(
+    title = "Gamble Acceptance by Domain",
+    x = "Condition",
+    y = "Probability of Choosing the Gamble Option (OwnD0)",
+    fill = "Version"
+  ) +
+  facet_wrap(~domain) +
+  theme(
+    legend.position = "bottom",
+    legend.justification = 0.5,
+    plot.title = element_text(hjust = 0.5),
+    panel.spacing = unit(1, "lines"),
+    strip.background = element_rect(fill = "transparent")
+  )
+
+# Group difference plot
+combined_contrasts_subset <- combined_contrasts_df[grepl("Money - Lives", combined_contrasts_df$contrast), ]
+
+combined_group_diffs_plot <- ggplot(combined_contrasts_subset, aes(x = condition, y = estimate, fill = condition)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_col(width = 0.35, position = position_dodge(width = 0.35), color = "black", alpha = 0.8) +
+  geom_errorbar(
+    aes(ymin = asymp.LCL, ymax = asymp.UCL),
+    width = 0.1, position = position_dodge(width = 0.35)
+  ) +
+  geom_text(
+    aes(label = p_lab, y = ifelse(estimate > 0, (asymp.UCL + 0.05), (asymp.LCL - 0.1))),
+    position = position_dodge(width = 0.35)
+  ) +
+  scale_fill_grey() +
+  coord_cartesian(ylim = c(-0.5, 0.5)) +
+  cowplot::theme_cowplot() +
+  labs(
+    title = "Difference in Gamble Acceptance",
+    subtitle = "Positive values indicate greater acceptance of gambles in monetary domain",
+    x = "Condition",
+    y = "Difference in Probabilities of Gambling\n(OwnD0: Money - Lives)",
+    fill = "Difference"
+  ) +
+  facet_wrap(~domain) +
+  theme(
+    legend.position = "none",
+    legend.justification = 0.5,
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5),
+    panel.spacing = unit(1, "lines"),
+    strip.background = element_rect(fill = "transparent")
+  )
+
+# Plot differences in influence between conditions
+condition_influence_plot <- all_contrast_pairs %>%
+  mutate(
+    estimate_abs = if_else(estimate < 0, abs(estimate), NA_real_),
+    lower.CL_abs = if_else(asymp.LCL < 0, abs(asymp.LCL), NA_real_),
+    upper.CL_abs = if_else(asymp.UCL < 0, abs(asymp.UCL), NA_real_)
+  ) %>%
+  ggplot(aes(x = frame, y = estimate, fill = frame)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_col(width = 0.35, position = position_dodge(width = 0.35), color = "black", alpha = 0.8) +
+  geom_errorbar(aes(ymin = asymp.LCL, ymax = asymp.UCL), width = 0.1, position = position_dodge(width = 0.35)) +
+  geom_text(
+    aes(label = p_lab, y = ifelse(estimate > 0, (asymp.UCL + 0.05), (asymp.LCL - 0.05))),
+    position = position_dodge(width = 0.35)
+  ) +
+  ggsignif::geom_signif(
+    stat = "identity", data = condition_frame_pairs_df,
+    aes(x = x, xend = xend, y = y, yend = y, annotation = p_lab),
+    comparisons = list("Lives", "Money"),
+    inherit.aes = FALSE
+  ) +
+  labs(
+    title = "Relative Difference in Influence Between Conditions",
+    subtitle = "Positive value indicate risk averse norms are more influential\nNegative values indicate risk seeking norms are more influential",
+    x = "Domain",
+    y = "Relative Influence\n(D0: Risk Averse - Risk Seeking)",
+    fill = "Version"
+  ) +
+  coord_cartesian(ylim = c(-0.5, 0.5)) +
+  scale_fill_manual(values = c("black", "white")) +
+  cowplot::theme_cowplot() +
+  facet_wrap(~domain) +
+  theme(
+    legend.position = "none",
+    legend.justification = c(0.5, 0.5),
+    panel.spacing = unit(1, "lines"),
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5),
+    strip.background = element_rect(fill = "transparent")
+  )
+
+# Plot differences in influence between domains
+domain_influence_plot <- frame_condition_pairs %>%
+  mutate(
+    estimate_abs = if_else(estimate < 0, abs(estimate), NA_real_),
+    lower.CL_abs = if_else(asymp.LCL < 0, abs(asymp.LCL), NA_real_),
+    upper.CL_abs = if_else(asymp.UCL < 0, abs(asymp.UCL), NA_real_)
+  ) %>%
+  ggplot(aes(x = condition, y = estimate, fill = condition)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_col(width = 0.35, position = position_dodge(width = 0.35), color = "black", alpha = 0.8) +
+  geom_errorbar(aes(ymin = asymp.LCL, ymax = asymp.UCL), width = 0.1, position = position_dodge(width = 0.35)) +
+  geom_text(
+    aes(label = p_lab, y = ifelse(estimate > 0, (asymp.UCL + 0.05), (asymp.LCL - 0.05))),
+    position = position_dodge(width = 0.35)
+  ) +
+  labs(
+    title = "Relative Difference in Influence Between Domains",
+    subtitle = "Positive values indicate greater norm influence in monetary domain\nNegative values indicate greater norm influence in moral domain",
+    x = "Condition",
+    y = "Relative Influence\n(D0: Money - Lives)",
+    fill = "Version"
+  ) +
+  coord_cartesian(ylim = c(-0.5, 0.5)) +
+  scale_fill_grey() +
+  cowplot::theme_cowplot() +
+  facet_wrap(~domain) +
+  theme(
+    legend.position = "none",
+    legend.justification = c(0.5, 0.5),
+    panel.spacing = unit(1, "lines"),
+    plot.title = element_text(hjust = 0.5),
+    plot.subtitle = element_text(hjust = 0.5),
+    strip.background = element_rect(fill = "transparent")
+  )
+
+fig6 <- combined_group_plot + combined_group_diffs_plot +
+  condition_influence_plot + domain_influence_plot +
+  plot_annotation(tag_levels = "a")
+
+ggsave(here("output/fig6.pdf"), fig6, scale = 1.5, width = 10, height = 7)
+fig6
+```
+
+```{r save-summary}
+#| include: false
+key_results_day0 <- bind_rows(
+  mutate(e1_contrasts_subset, frame = "Lives", stage = "Immediate (Day 0)"),
+  mutate(e2_contrasts_subset, frame = "Money", stage = "Immediate (Day 0)")
+) %>%
+  left_join(
+    select(all_contrast_pairs, frame, domain, pair_p_lab = p_lab, pair_y = y),
+    by = c("frame", "domain")
+  ) %>%
+  select(
+    stage, frame, domain, condition, contrast,
+    estimate, SE, asymp.LCL, asymp.UCL, z.ratio, p.value, p_lab,
+    pair_p_lab, pair_y
+  )
+
+write_csv(key_results_day0, here("output/key_results_day0.csv"))
+```
